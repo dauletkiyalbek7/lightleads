@@ -37,7 +37,7 @@ export function WorkspaceAvatar({ name, className }: { name: string; className?:
 
 /** Переключатель workspace: у пользователя может быть несколько компаний. */
 export function WorkspaceSwitcher({ labelClassName, className }: { labelClassName?: string; className?: string }) {
-  const { workspaces, workspace, setWorkspaceId } = useApp();
+  const { workspaces, workspace, setWorkspaceId, user } = useApp();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -62,15 +62,20 @@ export function WorkspaceSwitcher({ labelClassName, className }: { labelClassNam
             {ws.id === workspace.id && <Check className="size-4 text-brand" />}
           </DropdownMenuItem>
         ))}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem asChild className="min-h-11 gap-2.5 rounded-xl text-muted-foreground">
-          <Link href="/register">
-            <span className="inline-flex size-8 items-center justify-center rounded-[10px] bg-muted">
-              <Plus className="size-4" />
-            </span>
-            {t.nav.newWorkspace}
-          </Link>
-        </DropdownMenuItem>
+        {/* Workspace создаёт только владелец платформы: регистрации нет */}
+        {user?.isPlatformAdmin && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem asChild className="min-h-11 gap-2.5 rounded-xl text-muted-foreground">
+              <Link href="/admin">
+                <span className="inline-flex size-8 items-center justify-center rounded-[10px] bg-muted">
+                  <Plus className="size-4" />
+                </span>
+                {t.nav.newWorkspace}
+              </Link>
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

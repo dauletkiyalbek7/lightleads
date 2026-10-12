@@ -5,6 +5,7 @@ import { useState, type ReactNode } from "react";
 import { SaleDialog } from "@/components/features/sale-dialog";
 import { t } from "@/i18n";
 import { useMediaQuery } from "@/hooks/use-media-query";
+import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { BottomNav } from "./bottom-nav";
 import { currentNav } from "./nav";
@@ -20,6 +21,7 @@ const DESKTOP_QUERY = "(min-width: 1024px)";
  */
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const { demoMode, workspace } = useApp();
   const isDesktop = useMediaQuery(DESKTOP_QUERY);
   const [mode, setMode] = useState<SidebarMode>("auto");
   const nav = currentNav(pathname);
@@ -40,6 +42,11 @@ export function AppShell({ children }: { children: ReactNode }) {
               <h1 className="font-display text-[22px] leading-tight font-semibold tracking-tight">{t.nav[nav.key]}</h1>
               <p className="mt-1 text-[13px] text-muted-foreground">{t.pageSubtitle[nav.key]}</p>
             </div>
+          )}
+          {!demoMode && workspace.demoData && (
+            <p className="mb-4 rounded-2xl border border-border bg-card px-4 py-3 text-[13px] leading-relaxed text-muted-foreground">
+              {t.common.demoDataNote}
+            </p>
           )}
           {children}
         </main>

@@ -6,6 +6,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useTheme } from "@/hooks/use-theme";
 import { toast } from "sonner";
 import { z } from "zod";
+import { CredentialsDialog } from "@/components/features/credentials-dialog";
 import { WorkspaceAvatar } from "@/components/shell/workspace-switcher";
 import { PlatformIcon } from "@/components/kit/brand";
 import { Btn } from "@/components/kit/btn";
@@ -24,6 +25,7 @@ import { CURRENCY_SYMBOL, formatMoney, formatNumber } from "@/lib/format";
 import { DEMO_WORKSPACE_KEY, ingestExample, INGEST_PATH, SITE_SNIPPET, UTM_TEMPLATES } from "@/lib/snippets";
 import { useApp } from "@/lib/store";
 import { THEME_SWATCH, THEMES } from "@/lib/theme";
+import type { Credentials } from "@/lib/types";
 import type { Product } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -452,24 +454,39 @@ function Targets() {
 const emailSchema = z.email();
 
 function Team() {
-  const { members, inviteMember } = useApp();
+  const { members, inviteMember, removeMember, canManage, demoMode, user } = useApp();
   const s = t.settings.team;
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string>();
-  const [origin, setOrigin] = useState("https://app.lightleads.kz");
-  useEffect(() => setOrigin(window.location.origin), []);
+  const [pending, setPending] = useState(false);
+  const [credentials, setCredentials] = useState<Credentials | null>(null);
 
-  const submit = (e: FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!emailSchema.safeParse(email.trim()).success) {
       setError(s.emailError);
       return;
     }
-    inviteMember(email.trim());
+    setPending(true);
+    const result = await inviteMember({ email: email.trim(), name: name.trim() });
+    setPending(false);
+    if (!result.ok) {
+      setError(t.team.errors[result.error] ?? t.common.genericError);
+      return;
+    }
+    setName("");
     setEmail("");
     setError(undefined);
     toast.success(s.invited);
     celebrate();
+    // В демо аккаунт не создаётся, показывать нечего
+    if (!demoMode) setCredentials(result.data);
+  };
+
+  const remove = async (id: string) => {
+    if (await removeMember(id)) toast.success(s.removed);
+    else toast.error(t.common.genericError);
   };
 
   return (
@@ -484,32 +501,54 @@ function Team() {
                 <p className="truncate text-xs text-muted-foreground">{m.email}</p>
               </div>
               {m.status === "invited" ? <Pill tone="warning">{s.statusInvited}</Pill> : <Pill tone={m.role === "owner" ? "brand" : "muted"}>{s.roles[m.role]}</Pill>}
+              {/* Владельца и себя убрать нельзя */}
+              {canManage && m.role !== "owner" && m.id !== user?.id && (
+                <Btn variant="ghost" size="icon-sm" aria-label={s.remove} title={s.remove} onClick={() => void remove(m.id)}>
+                  <Trash2 />
+                </Btn>
+              )}
             </li>
           ))}
         </ul>
       </Section>
-      <Section title={s.invite}>
-        <form onSubmit={submit} className="space-y-3">
-          <Field label={t.auth.email} error={error}>
-            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder={s.invitePlaceholder} aria-invalid={Boolean(error)} />
-          </Field>
-          <Btn type="submit" className="w-full">
-            {s.invite}
-          </Btn>
-        </form>
-        <p className="mt-5 mb-1.5 text-xs font-medium text-muted-foreground">{s.inviteLink}</p>
-        <CopyBlock text={`${origin}/invite/aroma-7f3k2`} />
+      <Section title={s.invite} hint={canManage ? s.inviteHint : s.ownerOnly}>
+        {canManage && (
+          <form onSubmit={submit} className="space-y-3">
+            <Field label={s.name}>
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={s.namePlaceholder} autoComplete="off" />
+            </Field>
+            <Field label={t.auth.email} error={error}>
+              <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder={s.invitePlaceholder} aria-invalid={Boolean(error)} autoComplete="off" />
+            </Field>
+            <Btn type="submit" className="w-full" disabled={pending}>
+              {s.invite}
+            </Btn>
+          </form>
+        )}
       </Section>
+      <CredentialsDialog credentials={credentials} onClose={() => setCredentials(null)} />
     </div>
   );
 }
 
 function WorkspaceSettings() {
-  const { workspace } = useApp();
+  const { workspace, renameWorkspace, canManage } = useApp();
   const s = t.settings.workspace;
   const [name, setName] = useState(workspace.name);
+  const [pending, setPending] = useState(false);
   const [theme, setTheme] = useTheme();
   useEffect(() => setName(workspace.name), [workspace.name]);
+
+  const save = async () => {
+    const next = name.trim();
+    if (!next) return;
+    setPending(true);
+    const saved = await renameWorkspace(next);
+    setPending(false);
+    if (saved) toast.success(t.common.saved);
+    else toast.error(t.common.saveFailed);
+  };
+
   return (
     <div className="grid gap-4 md:gap-6 lg:grid-cols-2">
       <Section title={s.themeTitle} hint={s.themeHint} className="lg:col-span-2">
@@ -535,15 +574,17 @@ function WorkspaceSettings() {
           })}
         </div>
       </Section>
-      <Section title={s.title}>
+      <Section title={s.title} hint={canManage ? undefined : s.ownerOnly}>
         <div className="space-y-4">
           <Field label={s.name}>
-            <Input value={name} onChange={(e) => setName(e.target.value)} />
+            <Input value={name} onChange={(e) => setName(e.target.value)} readOnly={!canManage} />
           </Field>
           <Field label={s.timezone}>
-            <Input value={APP.timezone} readOnly className="text-muted-foreground" />
+            <Input value={workspace.timezone ?? APP.timezone} readOnly className="text-muted-foreground" />
           </Field>
-          <Btn onClick={() => toast.success(t.common.saved)}>{t.common.save}</Btn>
+          <Btn onClick={() => void save()} disabled={!canManage || pending}>
+            {t.common.save}
+          </Btn>
         </div>
       </Section>
       <Section title={s.dangerTitle} hint={s.dangerText}>

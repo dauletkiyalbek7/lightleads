@@ -1,8 +1,10 @@
 "use client";
 
-import { LogOut, Plus, Settings } from "lucide-react";
+import { Building2, KeyRound, LogIn, LogOut, Plus, Settings } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState } from "react";
+import { PasswordDialog } from "@/components/features/password-dialog";
 import { LogoMark } from "@/components/kit/brand";
 import { Btn } from "@/components/kit/btn";
 import { RateTip } from "@/components/kit/money";
@@ -41,36 +43,62 @@ export function CurrencyToggle({ className }: { className?: string }) {
 }
 
 function UserMenu() {
-  const { members } = useApp();
-  const me = members[0];
+  const { demoMode, user, members, signOut } = useApp();
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  // У гостя показываем демо-владельца, у вошедшего — его самого
+  const me = user ?? members[0];
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        aria-label={t.nav.profile}
-        className="bg-brand-gradient inline-flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-on-brand outline-none transition hover:shadow-brand focus-visible:ring-4 focus-visible:ring-brand/25"
-      >
-        {me?.name[0] ?? "Д"}
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" sideOffset={8} className="w-60 rounded-2xl p-1.5">
-        <DropdownMenuLabel className="px-2">
-          <span className="block text-sm font-semibold text-foreground">{me?.name}</span>
-          <span className="block text-xs font-normal text-muted-foreground">{me?.email}</span>
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem asChild className="min-h-10 gap-2 rounded-xl">
-          <Link href="/settings">
-            <Settings className="size-4" />
-            {t.nav.settings}
-          </Link>
-        </DropdownMenuItem>
-        <DropdownMenuItem asChild className="min-h-10 gap-2 rounded-xl">
-          <Link href="/">
-            <LogOut className="size-4" />
-            {t.nav.logout}
-          </Link>
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          aria-label={t.nav.profile}
+          className="bg-brand-gradient inline-flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-on-brand uppercase outline-none transition hover:shadow-brand focus-visible:ring-4 focus-visible:ring-brand/25"
+        >
+          {me?.name[0] ?? "Д"}
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" sideOffset={8} className="w-60 rounded-2xl p-1.5">
+          <DropdownMenuLabel className="px-2">
+            <span className="block truncate text-sm font-semibold text-foreground">{me?.name}</span>
+            <span className="block truncate text-xs font-normal text-muted-foreground">{me?.email}</span>
+          </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem asChild className="min-h-10 gap-2 rounded-xl">
+            <Link href="/settings">
+              <Settings className="size-4" />
+              {t.nav.settings}
+            </Link>
+          </DropdownMenuItem>
+          {user?.isPlatformAdmin && (
+            <DropdownMenuItem asChild className="min-h-10 gap-2 rounded-xl">
+              <Link href="/admin">
+                <Building2 className="size-4" />
+                {t.nav.admin}
+              </Link>
+            </DropdownMenuItem>
+          )}
+          {demoMode ? (
+            <DropdownMenuItem asChild className="min-h-10 gap-2 rounded-xl">
+              <Link href="/login">
+                <LogIn className="size-4" />
+                {t.nav.login}
+              </Link>
+            </DropdownMenuItem>
+          ) : (
+            <>
+              <DropdownMenuItem onSelect={() => setPasswordOpen(true)} className="min-h-10 gap-2 rounded-xl">
+                <KeyRound className="size-4" />
+                {t.nav.changePassword}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => void signOut()} className="min-h-10 gap-2 rounded-xl">
+                <LogOut className="size-4" />
+                {t.nav.logout}
+              </DropdownMenuItem>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <PasswordDialog open={passwordOpen} onOpenChange={setPasswordOpen} />
+    </>
   );
 }
 

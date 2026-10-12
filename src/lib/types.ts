@@ -26,6 +26,31 @@ export interface Workspace {
   name: string;
   /** role заложен сразу, в v1 все участники видят всё. */
   role: "owner" | "member";
+  timezone?: string;
+  /** Пока реклама не подключена, workspace показывает демо-данные. */
+  demoData?: boolean;
+  /** Настройки из базы; у демо-workspace их нет. */
+  settings?: WorkspaceSettings;
+}
+
+/** Вошедший пользователь. */
+export interface SessionUser {
+  id: string;
+  email: string;
+  name: string;
+  /** Владелец платформы: создаёт workspace и выдаёт доступы клиентам. */
+  isPlatformAdmin: boolean;
+}
+
+export interface SessionContext {
+  user: SessionUser;
+  workspaces: Workspace[];
+}
+
+/** Логин и пароль нового аккаунта. password = null, если аккаунт уже существовал. */
+export interface Credentials {
+  email: string;
+  password: string | null;
 }
 
 export interface AdAccount {

@@ -9,6 +9,7 @@ import { Pill } from "@/components/kit/pills";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { t } from "@/i18n";
 import { APP } from "@/lib/config";
+import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { isActive, NAV } from "./nav";
 import { SyncStatus } from "./sync-status";
@@ -34,6 +35,7 @@ const COLLAPSED_ONLY: Record<SidebarMode, string> = { auto: "lg:hidden", collaps
 
 export function Sidebar({ mode, onToggle }: { mode: SidebarMode; onToggle: () => void }) {
   const pathname = usePathname();
+  const { demoMode, workspace } = useApp();
   const label = LABEL[mode];
 
   return (
@@ -92,9 +94,13 @@ export function Sidebar({ mode, onToggle }: { mode: SidebarMode; onToggle: () =>
       <div className="space-y-1 border-t border-border p-3.5">
         <SyncStatus labelClassName={label} className="justify-center" />
         <div className="flex items-center justify-between gap-2 pl-1.5">
-          <Pill tone="brand" className={LABEL_INLINE[mode]}>
-            {t.common.demo}
-          </Pill>
+          {demoMode || workspace.demoData ? (
+            <Pill tone="brand" className={LABEL_INLINE[mode]}>
+              {demoMode ? t.common.demo : t.common.demoData}
+            </Pill>
+          ) : (
+            <span />
+          )}
           <button
             type="button"
             onClick={onToggle}

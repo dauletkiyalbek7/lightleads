@@ -98,11 +98,11 @@ export default function LandingPage() {
               <p className="mx-auto mt-5 max-w-2xl text-base leading-relaxed text-muted-foreground md:text-lg">{l.heroText}</p>
             </StaggerItem>
             <StaggerItem className="mt-8 flex w-full flex-col items-center justify-center gap-3 sm:w-auto sm:flex-row">
-              <Btn href="/register" size="lg" className="w-full sm:w-auto">
+              <Btn href="/dashboard" size="lg" className="w-full sm:w-auto">
                 {l.heroCta}
                 <ArrowRight />
               </Btn>
-              <Btn href="/dashboard" variant="secondary" size="lg" className="w-full sm:w-auto">
+              <Btn href="/login" variant="secondary" size="lg" className="w-full sm:w-auto">
                 {l.heroSecondary}
               </Btn>
             </StaggerItem>
@@ -192,7 +192,7 @@ export default function LandingPage() {
                       </li>
                     ))}
                   </ul>
-                  <Btn href="/register" variant={plan.featured ? "secondary" : "soft"} className={cn("mt-6 w-full", plan.featured && "border-0")}>
+                  <Btn href="/dashboard" variant={plan.featured ? "secondary" : "soft"} className={cn("mt-6 w-full", plan.featured && "border-0")}>
                     {plan.cta}
                   </Btn>
                 </Surface>

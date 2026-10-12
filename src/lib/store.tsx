@@ -1,6 +1,8 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { toast } from "sonner";
+import { t } from "@/i18n";
 import { aggregate, type Aggregate } from "./analytics";
 import { attributeAll, type Attribution } from "./attribution";
 import { toDual } from "./currency";
@@ -8,9 +10,25 @@ import { addDays, previousPeriod, resolvePeriod, todayISO, type PeriodPreset } f
 import { DEFAULT_MARGIN_PCT, DEMO_SALES_CURRENCY, generateDataset } from "./mock/seed";
 import { detectSignals, suggestTargets, type Signal } from "./rules";
 import { scoreCreatives, type CreativeStat } from "./score";
-import type { Currency, Dataset, DateRange, Dual, Member, Product, Sale, Workspace, WorkspaceSettings } from "./types";
+import { getBrowserSupabase } from "./supabase/client";
+import { rowToMember, settingsToRow, type MemberRow } from "./supabase/rows";
+import { callTeam, type TeamResult } from "./team-api";
+import type {
+  Credentials,
+  Currency,
+  Dataset,
+  DateRange,
+  Dual,
+  Member,
+  Product,
+  Sale,
+  SessionContext,
+  SessionUser,
+  Workspace,
+  WorkspaceSettings,
+} from "./types";
 
-const WORKSPACES: Workspace[] = [
+const DEMO_WORKSPACES: Workspace[] = [
   { id: "ws_demo", name: "Aroma House", role: "owner" },
   { id: "ws_empty", name: "Bilim Academy", role: "owner" },
 ];
@@ -22,6 +40,7 @@ const INITIAL_SYNC_MINUTES_AGO = 12;
 const MINUTE_MS = 60_000;
 const SYNC_DEMO_MS = 1600;
 const PLACEHOLDER_DAY = "2026-01-01";
+const WORKSPACE_STORAGE_KEY = "ll-workspace";
 
 const DEFAULT_SETTINGS: WorkspaceSettings = {
   salesCurrency: DEMO_SALES_CURRENCY,
@@ -67,9 +86,17 @@ interface Analytics {
 interface AppState {
   ready: boolean;
   today: string;
+  /** Гость без аккаунта: всё работает на тестовых данных в браузере. */
+  demoMode: boolean;
+  /** Вошедший пользователь; у гостя null. */
+  user: SessionUser | null;
+  /** Может менять настройки и состав workspace: владелец или владелец платформы. */
+  canManage: boolean;
+  signOut: () => Promise<void>;
   workspaces: Workspace[];
   workspace: Workspace;
   setWorkspaceId: (id: string) => void;
+  renameWorkspace: (name: string) => Promise<boolean>;
   ds: Dataset;
   isEmpty: boolean;
   sales: Sale[];
@@ -91,7 +118,8 @@ interface AppState {
   updateSale: (id: string, patch: Partial<Sale>) => void;
   addProduct: (p: Omit<Product, "id">) => void;
   removeProduct: (id: string) => void;
-  inviteMember: (email: string) => void;
+  inviteMember: (input: { email: string; name: string }) => Promise<TeamResult<Credentials>>;
+  removeMember: (userId: string) => Promise<boolean>;
   saleDialogOpen: boolean;
   setSaleDialogOpen: (v: boolean) => void;
   lastSyncedAt: number;
@@ -108,17 +136,25 @@ export function useApp(): AppState {
 }
 
 /**
- * Состояние демо-режима: данные генерируются в браузере и живут до перезагрузки.
- * В Фазе 1 провайдер начнёт читать то же самое из Supabase; компоненты не меняются.
+ * Состояние приложения.
+ * Гость (session = null) работает в демо-режиме: данные генерируются в браузере.
+ * У вошедшего пользователя workspace, настройки и команда лежат в Supabase.
+ * Реклама, лиды и продажи подключаются в следующих фазах; до тех пор workspace
+ * с флагом demoData показывает те же тестовые данные.
  */
-export function AppProvider({ children }: { children: ReactNode }) {
+export function AppProvider({ children, session = null }: { children: ReactNode; session?: SessionContext | null }) {
+  const demoMode = session === null;
+  const user = session?.user ?? null;
   const [today, setToday] = useState("");
   const [demo, setDemo] = useState<Dataset | null>(null);
-  const [workspaceId, setWorkspaceId] = useState(WORKSPACES[0].id);
+  const [realWorkspaces, setRealWorkspaces] = useState<Workspace[]>(session?.workspaces ?? []);
+  const workspaces = demoMode ? DEMO_WORKSPACES : realWorkspaces;
+  const [workspaceId, setWorkspaceIdState] = useState(workspaces[0]?.id ?? "");
+  const [realMembers, setRealMembers] = useState<Member[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
-  const [settings, setSettings] = useState<WorkspaceSettings>(DEFAULT_SETTINGS);
+  const [demoSettings, setDemoSettings] = useState<WorkspaceSettings>(DEFAULT_SETTINGS);
   const [preset, setPreset] = useState<PeriodPreset>(DEFAULT_PRESET);
   const [custom, setCustom] = useState<DateRange | undefined>();
   const [compare, setCompare] = useState(true);
@@ -139,7 +175,45 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setLastSyncedAt(Date.now() - INITIAL_SYNC_MINUTES_AGO * MINUTE_MS);
   }, []);
 
-  const isEmpty = workspaceId === EMPTY_WORKSPACE_ID;
+  const workspace = workspaces.find((w) => w.id === workspaceId) ?? workspaces[0];
+  const settings = demoMode ? demoSettings : (workspace.settings ?? DEFAULT_SETTINGS);
+  const canManage = demoMode || workspace.role === "owner" || user?.isPlatformAdmin === true;
+  const isEmpty = demoMode ? workspaceId === EMPTY_WORKSPACE_ID : workspace.demoData === false;
+
+  // Возвращаем workspace, выбранный в прошлый раз
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(WORKSPACE_STORAGE_KEY);
+      if (stored && workspaces.some((w) => w.id === stored)) setWorkspaceIdState(stored);
+    } catch {
+      /* хранилище недоступно — остаётся первый workspace */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- читаем один раз при входе
+  }, []);
+
+  const setWorkspaceId = useCallback((id: string) => {
+    setWorkspaceIdState(id);
+    try {
+      localStorage.setItem(WORKSPACE_STORAGE_KEY, id);
+    } catch {
+      /* приватный режим: выбор сохранится до перезагрузки */
+    }
+  }, []);
+
+  const loadMembers = useCallback(async (id: string) => {
+    const { data } = await getBrowserSupabase()
+      .from("workspace_members")
+      .select("role, profiles(id, full_name, email)")
+      .eq("workspace_id", id)
+      .order("created_at")
+      .returns<MemberRow[]>();
+    setRealMembers((data ?? []).flatMap((row) => rowToMember(row) ?? []));
+  }, []);
+
+  const realWorkspaceId = demoMode ? null : workspace.id;
+  useEffect(() => {
+    if (realWorkspaceId) void loadMembers(realWorkspaceId);
+  }, [realWorkspaceId, loadMembers]);
   const ds = useMemo<Dataset>(() => {
     if (!demo) return blankDataset(PLACEHOLDER_DAY);
     return isEmpty ? blankDataset(demo.today, demo.rates, demo.members.slice(0, 1)) : demo;
@@ -175,7 +249,48 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (nextCustom) setCustom(nextCustom);
   }, []);
 
-  const updateSettings = useCallback((patch: Partial<WorkspaceSettings>) => setSettings((s) => ({ ...s, ...patch })), []);
+  const patchWorkspace = useCallback(
+    (id: string, patch: Partial<Workspace>) => setRealWorkspaces((list) => list.map((w) => (w.id === id ? { ...w, ...patch } : w))),
+    [],
+  );
+
+  /** Меняет строку workspace в базе. false — база отказала (например, участник без прав владельца). */
+  const saveWorkspace = useCallback(async (id: string, row: Record<string, unknown>) => {
+    const { data, error } = await getBrowserSupabase().from("workspaces").update(row).eq("id", id).select("id");
+    return !error && (data?.length ?? 0) > 0;
+  }, []);
+
+  const updateSettings = useCallback(
+    (patch: Partial<WorkspaceSettings>) => {
+      if (demoMode) {
+        setDemoSettings((s) => ({ ...s, ...patch }));
+        return;
+      }
+      const previous = settings;
+      patchWorkspace(workspace.id, { settings: { ...previous, ...patch } });
+      void saveWorkspace(workspace.id, settingsToRow(patch)).then((saved) => {
+        if (saved) return;
+        patchWorkspace(workspace.id, { settings: previous });
+        toast.error(t.common.saveFailed);
+      });
+    },
+    [demoMode, settings, workspace.id, patchWorkspace, saveWorkspace],
+  );
+
+  const renameWorkspace = useCallback(
+    async (name: string) => {
+      if (demoMode) return true;
+      const saved = await saveWorkspace(workspace.id, { name });
+      if (saved) patchWorkspace(workspace.id, { name });
+      return saved;
+    },
+    [demoMode, workspace.id, patchWorkspace, saveWorkspace],
+  );
+
+  const signOut = useCallback(async () => {
+    await getBrowserSupabase().auth.signOut();
+    window.location.assign("/login");
+  }, []);
 
   const addSales = useCallback((list: Omit<Sale, "id">[]) => {
     const stamp = Date.now();
@@ -194,13 +309,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
   const removeProduct = useCallback((id: string) => setProducts((prev) => prev.filter((p) => p.id !== id)), []);
   const inviteMember = useCallback(
-    (email: string) =>
-      setMembers((prev) => [
-        ...prev,
-        { id: `m_${Date.now()}`, name: email.split("@")[0], email, role: "member", status: "invited" },
-      ]),
-    [],
+    async ({ email, name }: { email: string; name: string }): Promise<TeamResult<Credentials>> => {
+      if (demoMode) {
+        setMembers((prev) => [
+          ...prev,
+          { id: `m_${Date.now()}`, name: name || email.split("@")[0], email, role: "member", status: "invited" },
+        ]);
+        return { ok: true, data: { email, password: null } };
+      }
+      const result = await callTeam({ action: "invite_member", workspaceId: workspace.id, email, name });
+      if (result.ok) await loadMembers(workspace.id);
+      return result;
+    },
+    [demoMode, workspace.id, loadMembers],
   );
+
+  const removeMember = useCallback(
+    async (userId: string) => {
+      if (demoMode) {
+        setMembers((prev) => prev.filter((m) => m.id !== userId));
+        return true;
+      }
+      const result = await callTeam<{ ok: boolean }>({ action: "remove_member", workspaceId: workspace.id, userId });
+      if (result.ok) await loadMembers(workspace.id);
+      return result.ok;
+    },
+    [demoMode, workspace.id, loadMembers],
+  );
+
+  const demoMembers = isEmpty ? members.slice(0, 1) : members;
 
   const syncNow = useCallback(() => {
     setSyncing(true);
@@ -213,14 +350,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const value: AppState = {
     ready: demo !== null,
     today,
-    workspaces: WORKSPACES,
-    workspace: WORKSPACES.find((w) => w.id === workspaceId) ?? WORKSPACES[0],
+    demoMode,
+    user,
+    canManage,
+    signOut,
+    workspaces,
+    workspace,
     setWorkspaceId,
+    renameWorkspace,
     ds,
     isEmpty,
     sales: wsSales,
     products: wsProducts,
-    members: isEmpty ? members.slice(0, 1) : members,
+    members: demoMode ? demoMembers : realMembers,
     attributions,
     settings,
     updateSettings,
@@ -238,6 +380,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     addProduct,
     removeProduct,
     inviteMember,
+    removeMember,
     saleDialogOpen,
     setSaleDialogOpen,
     lastSyncedAt,
