@@ -170,11 +170,44 @@ async function resetPassword(caller: Caller, body: Record<string, unknown>) {
   return { email: profile.email, password };
 }
 
+/**
+ * Удаляет workspace со всеми данными. Аккаунты участников, у которых не осталось
+ * ни одного workspace, удаляются тоже: иначе они копятся и их негде увидеть.
+ */
+async function deleteWorkspace(caller: Caller, body: Record<string, unknown>) {
+  if (!caller.isPlatformAdmin) throw new HttpError(403, "forbidden");
+  const workspaceId = String(body.workspaceId ?? "");
+  const { data: workspace } = await admin.from("workspaces").select("id, name").eq("id", workspaceId).maybeSingle();
+  if (!workspace) throw new HttpError(404, "workspace_not_found");
+  // Защита от случайного удаления: название человек набирает вручную
+  if (String(body.confirmName ?? "").trim() !== workspace.name) throw new HttpError(400, "name_mismatch");
+
+  const { data: members } = await admin.from("workspace_members").select("user_id").eq("workspace_id", workspaceId);
+  const { error } = await admin.from("workspaces").delete().eq("id", workspaceId);
+  if (error) throw new HttpError(500, "workspace_delete_failed");
+
+  let removedUsers = 0;
+  for (const { user_id: userId } of members ?? []) {
+    if (userId === caller.id) continue;
+    const [{ count }, { data: profile }] = await Promise.all([
+      admin.from("workspace_members").select("workspace_id", { count: "exact", head: true }).eq("user_id", userId),
+      admin.from("profiles").select("is_platform_admin").eq("id", userId).maybeSingle(),
+    ]);
+    if ((count ?? 0) > 0 || profile?.is_platform_admin) continue;
+    const { error: userError } = await admin.auth.admin.deleteUser(userId);
+    if (!userError) removedUsers += 1;
+  }
+
+  await audit(null, caller.id, "workspace.deleted", { name: workspace.name, removed_users: removedUsers });
+  return { ok: true, removedUsers };
+}
+
 const ACTIONS: Record<string, (caller: Caller, body: Record<string, unknown>) => Promise<unknown>> = {
   create_workspace: createWorkspace,
   invite_member: inviteMember,
   remove_member: removeMember,
   reset_password: resetPassword,
+  delete_workspace: deleteWorkspace,
 };
 
 Deno.serve(async (req: Request) => {

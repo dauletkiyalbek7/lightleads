@@ -8,6 +8,7 @@ import { CredentialsDialog } from "@/components/features/credentials-dialog";
 import { Logo } from "@/components/kit/brand";
 import { Btn } from "@/components/kit/btn";
 import { Field, Input } from "@/components/kit/field";
+import { Modal } from "@/components/kit/overlay";
 import { Pill } from "@/components/kit/pills";
 import { Sk } from "@/components/kit/states";
 import { Section } from "@/components/kit/surface";
@@ -41,6 +42,7 @@ export function AdminPanel({ user }: { user: SessionUser }) {
   const [clients, setClients] = useState<Client[] | null>(null);
   const [credentials, setCredentials] = useState<Credentials | null>(null);
   const [isReset, setIsReset] = useState(false);
+  const [deleting, setDeleting] = useState<Client | null>(null);
 
   const load = useCallback(async () => {
     const { data } = await getBrowserSupabase()
@@ -104,7 +106,18 @@ export function AdminPanel({ user }: { user: SessionUser }) {
               </Section>
             )}
             {clients?.map((client) => (
-              <Section key={client.id} title={client.name} hint={`${s.created} ${formatDate(client.createdOn)}`} bodyClassName="px-2 pt-2 pb-3 md:px-3">
+              <Section
+                key={client.id}
+                title={client.name}
+                hint={`${s.created} ${formatDate(client.createdOn)}`}
+                bodyClassName="px-2 pt-2 pb-3 md:px-3"
+                action={
+                  <Btn variant="ghost" size="sm" className="text-danger hover:bg-danger/10 hover:text-danger" onClick={() => setDeleting(client)}>
+                    <Trash2 />
+                    {s.deleteClient}
+                  </Btn>
+                }
+              >
                 <ul>
                   {client.members.map((m) => (
                     <li key={m.id} className="flex min-h-16 flex-wrap items-center gap-3 rounded-2xl px-3 py-2">
@@ -138,6 +151,7 @@ export function AdminPanel({ user }: { user: SessionUser }) {
         </div>
       </main>
       <CredentialsDialog credentials={credentials} onClose={() => setCredentials(null)} resetTitle={isReset} />
+      <DeleteClient client={deleting} onClose={() => setDeleting(null)} onDeleted={load} />
     </div>
   );
 }
@@ -214,5 +228,54 @@ function AddMember({ workspaceId, onAdded, onCredentials }: FormProps & { worksp
         {s.add}
       </Btn>
     </form>
+  );
+}
+
+const DELETE_FORM_ID = "delete-client-form";
+
+/** Удаление компании необратимо, поэтому название нужно набрать вручную. */
+function DeleteClient({ client, onClose, onDeleted }: { client: Client | null; onClose: () => void; onDeleted: () => Promise<void> }) {
+  const s = t.admin;
+  const [confirmName, setConfirmName] = useState("");
+  const [error, setError] = useState<string>();
+  const [pending, setPending] = useState(false);
+
+  const close = () => {
+    setConfirmName("");
+    setError(undefined);
+    onClose();
+  };
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!client) return;
+    setPending(true);
+    const result = await callTeam<{ ok: boolean }>({ action: "delete_workspace", workspaceId: client.id, confirmName });
+    setPending(false);
+    if (!result.ok) return setError(errorText(result.error));
+    toast.success(s.deleted);
+    close();
+    await onDeleted();
+  };
+
+  return (
+    <Modal
+      open={client !== null}
+      onOpenChange={(open) => !open && close()}
+      title={s.deleteTitle}
+      description={s.deleteText}
+      footer={
+        <Btn type="submit" form={DELETE_FORM_ID} variant="danger" disabled={pending || confirmName.trim() !== client?.name}>
+          <Trash2 />
+          {s.deleteAction}
+        </Btn>
+      }
+    >
+      <form id={DELETE_FORM_ID} onSubmit={submit}>
+        <Field label={s.deleteConfirmLabel} error={error}>
+          <Input value={confirmName} onChange={(e) => setConfirmName(e.target.value)} placeholder={client?.name} autoComplete="off" aria-invalid={Boolean(error)} />
+        </Field>
+      </form>
+    </Modal>
   );
 }

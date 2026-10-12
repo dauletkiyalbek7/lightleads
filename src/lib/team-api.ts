@@ -7,7 +7,8 @@ type TeamRequest =
   | { action: "create_workspace"; name: string; ownerEmail: string; ownerName: string }
   | { action: "invite_member"; workspaceId: string; email: string; name: string }
   | { action: "remove_member"; workspaceId: string; userId: string }
-  | { action: "reset_password"; userId: string };
+  | { action: "reset_password"; userId: string }
+  | { action: "delete_workspace"; workspaceId: string; confirmName: string };
 
 export type TeamResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
