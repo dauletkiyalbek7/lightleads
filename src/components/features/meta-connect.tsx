@@ -29,6 +29,8 @@ const PERCENT = 100;
 /** Параметры, с которыми Facebook возвращает браузер на страницу настроек. */
 const RESULT_PARAM = "meta";
 const DETAIL_PARAM = "detail";
+/** Ошибки Meta держим на экране долго: их нужно успеть прочитать и переслать. */
+const ERROR_TOAST = { duration: 60_000, closeButton: true };
 
 type Connection = Pick<AdConnection, "status" | "userName">;
 const errorText = (result: Extract<FnResult<unknown>, { ok: false }>) => result.detail ?? t.meta.errors[result.error] ?? t.common.genericError;
@@ -62,7 +64,7 @@ export function MetaConnection() {
     setOptions(null);
     const result = await metaAccounts(workspace.id);
     if (!result.ok) {
-      toast.error(errorText(result));
+      toast.error(errorText(result), ERROR_TOAST);
       setPickerOpen(false);
       await loadConnection();
       return;
@@ -85,7 +87,7 @@ export function MetaConnection() {
       toast.success(s.connected);
       void openPicker();
     } else {
-      toast.error(params.get(DETAIL_PARAM) ?? t.common.genericError);
+      toast.error(params.get(DETAIL_PARAM) ?? t.common.genericError, ERROR_TOAST);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- один раз при открытии страницы
   }, []);
@@ -95,7 +97,7 @@ export function MetaConnection() {
     const result = await metaStart(workspace.id);
     if (result.ok) window.location.assign(result.data.url);
     else {
-      toast.error(errorText(result));
+      toast.error(errorText(result), ERROR_TOAST);
       setPending(false);
     }
   };
@@ -113,7 +115,7 @@ export function MetaConnection() {
     setPending(true);
     const selected = await metaSelectAccounts(workspace.id, [...chosen]);
     if (!selected.ok) {
-      toast.error(errorText(selected));
+      toast.error(errorText(selected), ERROR_TOAST);
       setPending(false);
       return;
     }
@@ -127,7 +129,7 @@ export function MetaConnection() {
       toast.success(s.syncDone);
       celebrate();
     } else {
-      toast.error(`${s.syncFailed}: ${errorText(result)}`);
+      toast.error(`${s.syncFailed}: ${errorText(result)}`, ERROR_TOAST);
     }
   };
 
