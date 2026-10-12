@@ -137,7 +137,7 @@ export default function CreativePage() {
                       <div key={part.key} className="flex items-center gap-2 text-[11px] text-muted-foreground">
                         <dt className="w-16 shrink-0">{part.label}</dt>
                         <dd className="h-1.5 flex-1 overflow-hidden rounded-full bg-brand-soft">
-                          <span className="block h-full rounded-full bg-brand" style={{ width: `${Math.round(parts[part.key] * 100)}%` }} />
+                          <span className="block h-full rounded-full bg-brand-fill" style={{ width: `${Math.round(parts[part.key] * 100)}%` }} />
                         </dd>
                       </div>
                     ))}

@@ -1,7 +1,7 @@
 import confetti from "canvas-confetti";
 
 const ACCENTS = ["#FF5C7A", "#FFB020", "#12B76A"];
-const BRAND_VARS = ["--brand", "--brand-2"];
+const BRAND_VARS = ["--brand-fill", "--brand-fill-2"];
 
 /** Фирменные цвета берём из текущей темы, чтобы конфетти совпадало с интерфейсом. */
 function brandColors(): string[] {

@@ -22,10 +22,10 @@ export function AuthShell({ title, text, children, footer }: { title: string; te
       </div>
 
       <div className="relative hidden overflow-hidden p-3 lg:block">
-        <div className="bg-brand-gradient relative flex h-full flex-col justify-end overflow-hidden rounded-[32px] p-12 text-white">
+        <div className="bg-brand-gradient relative flex h-full flex-col justify-end overflow-hidden rounded-[32px] p-12 text-on-brand">
           <span className="absolute -top-24 -right-16 size-80 rounded-full bg-white/15 blur-2xl" />
-          <span className="absolute top-1/3 -left-20 size-72 rounded-full bg-coral/40 blur-3xl" />
-          <span className="absolute right-10 bottom-1/3 size-40 rounded-full bg-sun/40 blur-3xl" />
+          <span className="absolute top-1/3 -left-20 size-72 rounded-full bg-brand-glow/40 blur-3xl" />
+          <span className="absolute right-10 bottom-1/3 size-40 rounded-full bg-brand-glow-2/40 blur-3xl" />
           <div className="relative">
             <h2 className="font-display max-w-md text-3xl leading-tight font-semibold tracking-tight">{t.auth.sideTitle}</h2>
             <ul className="mt-8 space-y-3">

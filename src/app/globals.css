@@ -13,6 +13,11 @@
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
   --color-brand: var(--brand);
   --color-brand-2: var(--brand-2);
+  --color-brand-fill: var(--brand-fill);
+  --color-brand-fill-2: var(--brand-fill-2);
+  --color-on-brand: var(--brand-on);
+  --color-brand-glow: var(--brand-glow);
+  --color-brand-glow-2: var(--brand-glow-2);
   --color-brand-soft: var(--brand-soft);
   --color-brand-soft-hover: var(--brand-soft-hover);
   --color-series-revenue: var(--series-revenue);
@@ -75,19 +80,28 @@
    * Фирменный цвет задаётся этими токенами; темы ниже переопределяют только их.
    * Переключатель: Настройки → Workspace → Оформление (src/lib/theme.ts).
    */
-  --brand: #6d5bff;
-  --brand-2: #3d8bff;
+  /* Фирменный цвет для текста, иконок и рамок: читается на белом */
+  --brand: #457a0e;
+  --brand-2: #0d9488;
+  /* Заливки: кнопки, логотип, акцентные блоки. Перелив --brand-fill → --brand-fill-2 */
+  --brand-fill: #a3e635;
+  --brand-fill-2: #84cc16;
   /* Блик в переливе primary-кнопки */
-  --brand-3: #8f7bff;
-  --brand-soft: #f1efff;
-  --brand-soft-hover: #e6e2ff;
+  --brand-fill-3: #bef264;
+  /* Текст и иконки поверх заливки */
+  --brand-on: #1a2e05;
+  /* Цветные блики на больших фирменных блоках */
+  --brand-glow: #fde047;
+  --brand-glow-2: #ecfccb;
+  --brand-soft: #f3fbdf;
+  --brand-soft-hover: #e7f6c4;
   /* Текст на светлой фирменной подложке */
-  --brand-ink: #4b3be0;
-  /* Тот же --brand в виде «R G B» — для полупрозрачных теней */
-  --brand-rgb: 109 91 255;
+  --brand-ink: #365f0a;
+  /* --brand-fill-2 в виде «R G B» — для полупрозрачных теней */
+  --brand-rgb: 132 204 22;
   /* Серии графика «расход и выручка». Пары проверены validate_palette.js на различимость при дальтонизме. */
-  --series-revenue: #6d5bff;
-  --series-spend: #ff5c7a;
+  --series-revenue: #65a30d;
+  --series-spend: #6d5bff;
   --coral: #ff5c7a;
   --sun: #ffb020;
   --success: #12b76a;
@@ -103,8 +117,8 @@
   --card-foreground: #101828;
   --popover: #ffffff;
   --popover-foreground: #101828;
-  --primary: var(--brand);
-  --primary-foreground: #ffffff;
+  --primary: var(--brand-fill);
+  --primary-foreground: var(--brand-on);
   --secondary: #f2f4f9;
   --secondary-foreground: #101828;
   --muted: #f2f4f9;
@@ -131,16 +145,21 @@
   --sidebar-ring: var(--brand);
 }
 
-:root[data-theme="green"] {
-  --brand: #0a9a6a;
-  --brand-2: #0e9f9a;
-  --brand-3: #34d399;
-  --brand-soft: #e7f8f1;
-  --brand-soft-hover: #d2f1e4;
-  --brand-ink: #067a55;
-  --brand-rgb: 10 154 106;
-  --series-revenue: #0a9a6a;
-  --series-spend: #6d5bff;
+:root[data-theme="violet"] {
+  --brand: #6d5bff;
+  --brand-2: #3d8bff;
+  --brand-fill: #6d5bff;
+  --brand-fill-2: #3d8bff;
+  --brand-fill-3: #8f7bff;
+  --brand-on: #ffffff;
+  --brand-glow: #ff5c7a;
+  --brand-glow-2: #ffb020;
+  --brand-soft: #f1efff;
+  --brand-soft-hover: #e6e2ff;
+  --brand-ink: #4b3be0;
+  --brand-rgb: 109 91 255;
+  --series-revenue: #6d5bff;
+  --series-spend: #ff5c7a;
 }
 
 @layer base {
@@ -166,7 +185,7 @@
 }
 
 @utility bg-brand-gradient {
-  background-image: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+  background-image: linear-gradient(135deg, var(--brand-fill) 0%, var(--brand-fill-2) 100%);
 }
 @utility text-brand-gradient {
   background-image: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
@@ -176,7 +195,7 @@
 }
 /* Переливающийся градиент primary-кнопки */
 @utility btn-shimmer {
-  background-image: linear-gradient(110deg, var(--brand) 0%, var(--brand-2) 35%, var(--brand-3) 55%, var(--brand) 100%);
+  background-image: linear-gradient(110deg, var(--brand-fill) 0%, var(--brand-fill-2) 35%, var(--brand-fill-3) 55%, var(--brand-fill) 100%);
   background-size: 220% 100%;
   animation: shimmer 6s ease-in-out infinite;
 }

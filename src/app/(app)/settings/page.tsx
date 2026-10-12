@@ -424,13 +424,13 @@ function Targets() {
           </Field>
         </div>
       </Section>
-      <Surface className="bg-brand-gradient flex flex-col justify-between gap-6 border-0 p-6 text-white shadow-brand">
+      <Surface className="bg-brand-gradient flex flex-col justify-between gap-6 border-0 p-6 text-on-brand shadow-brand">
         <div>
           <span className="inline-flex size-11 items-center justify-center rounded-2xl bg-white/20">
             <Sparkles className="size-5" />
           </span>
           <h2 className="font-display mt-4 text-[15px] font-semibold">{s.suggestTitle}</h2>
-          <p className="mt-2 text-sm leading-relaxed text-white/85">
+          <p className="mt-2 text-sm leading-relaxed text-on-brand/85">
             {s.suggestText({ cac: formatMoney(analytics.suggested.cacKzt, "KZT"), romi: `${analytics.suggested.romiPct}%` })}
           </p>
         </div>
@@ -478,7 +478,7 @@ function Team() {
         <ul>
           {members.map((m) => (
             <li key={m.id} className="flex min-h-16 items-center gap-3 rounded-2xl px-3 py-2">
-              <WorkspaceAvatar name={m.name} className="rounded-full from-brand to-brand-2" />
+              <WorkspaceAvatar name={m.name} className="rounded-full from-brand-fill to-brand-fill-2 text-on-brand" />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{m.name}</p>
                 <p className="truncate text-xs text-muted-foreground">{m.email}</p>

@@ -35,7 +35,7 @@ export function BottomNav() {
         initial={{ scale: 0, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ type: "spring", stiffness: 380, damping: 24, delay: 0.25 }}
-        className="btn-shimmer fixed right-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-40 inline-flex h-14 items-center gap-2 rounded-full pr-5 pl-4 text-[15px] font-semibold text-white shadow-brand-lg outline-none focus-visible:ring-4 focus-visible:ring-brand/30 md:hidden"
+        className="btn-shimmer fixed right-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-40 inline-flex h-14 items-center gap-2 rounded-full pr-5 pl-4 text-[15px] font-semibold text-on-brand shadow-brand-lg outline-none focus-visible:ring-4 focus-visible:ring-brand/30 md:hidden"
       >
         <Plus className="size-6" strokeWidth={2.4} />
         {t.nav.addSale}

@@ -46,8 +46,8 @@ export default function LandingPage() {
     <div className="relative overflow-hidden bg-background">
       {/* Яркие размытые пятна фона */}
       <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-[900px]">
-        <span className="absolute -top-40 left-[8%] size-[520px] rounded-full bg-brand/25 blur-[120px]" />
-        <span className="absolute top-10 right-[4%] size-[440px] rounded-full bg-brand-2/25 blur-[120px]" />
+        <span className="absolute -top-40 left-[8%] size-[520px] rounded-full bg-brand-fill/25 blur-[120px]" />
+        <span className="absolute top-10 right-[4%] size-[440px] rounded-full bg-brand-fill-2/25 blur-[120px]" />
         <span className="absolute top-[420px] left-[42%] size-[320px] rounded-full bg-coral/15 blur-[110px]" />
       </div>
 
@@ -178,10 +178,10 @@ export default function LandingPage() {
           <div className="mt-10 grid gap-3 md:grid-cols-3 md:gap-4">
             {l.plans.map((plan) => (
               <Reveal key={plan.name}>
-                <Surface className={cn("flex h-full flex-col p-6", plan.featured && "bg-brand-gradient border-0 text-white shadow-brand-lg")}>
+                <Surface className={cn("flex h-full flex-col p-6", plan.featured && "bg-brand-gradient border-0 text-on-brand shadow-brand-lg")}>
                   <h3 className="font-display text-base font-semibold">{plan.name}</h3>
                   <p className="font-display mt-4 text-3xl font-semibold tracking-tight">{plan.price}</p>
-                  <p className={cn("mt-1 text-sm", plan.featured ? "text-white/75" : "text-muted-foreground")}>{plan.period}</p>
+                  <p className={cn("mt-1 text-sm", plan.featured ? "text-on-brand/75" : "text-muted-foreground")}>{plan.period}</p>
                   <ul className="mt-6 flex-1 space-y-2.5 text-sm">
                     {plan.features.map((feature) => (
                       <li key={feature} className="flex items-center gap-2.5">
@@ -204,12 +204,12 @@ export default function LandingPage() {
         {/* Финальный призыв */}
         <section className="mx-auto max-w-6xl px-4 pb-16 md:px-6 md:pb-24">
           <Reveal>
-            <div className="bg-brand-gradient relative overflow-hidden rounded-[32px] px-6 py-12 text-center text-white shadow-brand-lg md:px-12 md:py-16">
+            <div className="bg-brand-gradient relative overflow-hidden rounded-[32px] px-6 py-12 text-center text-on-brand shadow-brand-lg md:px-12 md:py-16">
               <span className="absolute -top-20 -left-10 size-64 rounded-full bg-white/15 blur-2xl" />
-              <span className="absolute -right-10 -bottom-24 size-72 rounded-full bg-coral/40 blur-3xl" />
+              <span className="absolute -right-10 -bottom-24 size-72 rounded-full bg-brand-glow/40 blur-3xl" />
               <div className="relative">
                 <h2 className="font-display mx-auto max-w-2xl text-2xl leading-tight font-semibold tracking-tight md:text-4xl">{l.ctaTitle}</h2>
-                <p className="mx-auto mt-3 max-w-xl text-white/85">{l.ctaText}</p>
+                <p className="mx-auto mt-3 max-w-xl text-on-brand/85">{l.ctaText}</p>
                 <Btn href="/dashboard" variant="secondary" size="lg" className="mt-8 border-0">
                   {l.heroCta}
                   <ArrowRight />

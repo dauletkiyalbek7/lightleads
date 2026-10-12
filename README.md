@@ -45,14 +45,16 @@ npm run build      # сборка для Vercel
 
 Сайт: https://lightleads-indol.vercel.app (Vercel, проект `lightleads`).
 
-Каждый push в ветку `main` собирается и выкладывается автоматически. Если сборка из GitHub
-падает с ошибкой `git_info_fail` («Git information retrieval failed»), переподключите
-репозиторий и выложите напрямую:
+Сборка по push из GitHub отключена в `vercel.json` (`git.deploymentEnabled: false`): в октябре
+2026 она падала с ошибкой `git_info_fail` — GitHub отвечал Vercel отказом 403 «secondary rate
+limit», и переподключение репозитория не помогло. Поэтому после `git push` сайт выкладывается
+напрямую:
 
 ```bash
-npx vercel git disconnect && npx vercel git connect
 npx vercel deploy --prod
 ```
+
+Чтобы вернуть автоматическую сборку, удалите блок `git` из `vercel.json`.
 
 ## Стек
 

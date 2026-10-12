@@ -182,7 +182,7 @@ function ChatTab() {
             <p
               className={cn(
                 "max-w-[85%] rounded-[20px] px-4 py-3 text-sm leading-relaxed md:max-w-[70%]",
-                m.role === "user" ? "bg-brand-gradient rounded-br-md text-white" : "rounded-bl-md bg-muted text-foreground",
+                m.role === "user" ? "bg-brand-gradient rounded-br-md text-on-brand" : "rounded-bl-md bg-muted text-foreground",
               )}
             >
               {m.text}

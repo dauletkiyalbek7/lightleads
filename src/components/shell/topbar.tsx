@@ -47,7 +47,7 @@ function UserMenu() {
     <DropdownMenu>
       <DropdownMenuTrigger
         aria-label={t.nav.profile}
-        className="bg-brand-gradient inline-flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white outline-none transition hover:shadow-brand focus-visible:ring-4 focus-visible:ring-brand/25"
+        className="bg-brand-gradient inline-flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-on-brand outline-none transition hover:shadow-brand focus-visible:ring-4 focus-visible:ring-brand/25"
       >
         {me?.name[0] ?? "Д"}
       </DropdownMenuTrigger>

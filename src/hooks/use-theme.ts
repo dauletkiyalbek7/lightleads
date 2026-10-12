@@ -5,7 +5,7 @@ import { DEFAULT_THEME, isTheme, THEME_STORAGE_KEY, type Theme } from "@/lib/the
 
 function applyTheme(theme: Theme) {
   const root = document.documentElement;
-  if (theme === "violet") delete root.dataset.theme;
+  if (theme === DEFAULT_THEME) delete root.dataset.theme;
   else root.dataset.theme = theme;
 }
 

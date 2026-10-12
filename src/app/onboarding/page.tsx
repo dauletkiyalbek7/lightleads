@@ -135,14 +135,14 @@ function ChoiceGrid({ choices, value, onChange }: { choices: Choice[]; value: Se
                 active ? "border-brand bg-brand-soft/60" : "border-border hover:border-brand/40",
               )}
             >
-              <span className={cn("inline-flex size-11 shrink-0 items-center justify-center rounded-[14px]", active ? "bg-brand text-white" : "bg-muted text-muted-foreground")}>
+              <span className={cn("inline-flex size-11 shrink-0 items-center justify-center rounded-[14px]", active ? "bg-brand-fill text-on-brand" : "bg-muted text-muted-foreground")}>
                 <choice.icon className="size-5" />
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block text-sm font-semibold">{choice.name}</span>
                 <span className="block text-xs text-muted-foreground">{choice.text}</span>
               </span>
-              <span className={cn("inline-flex size-6 shrink-0 items-center justify-center rounded-full border", active ? "border-brand bg-brand text-white" : "border-border")}>
+              <span className={cn("inline-flex size-6 shrink-0 items-center justify-center rounded-full border", active ? "border-brand-fill-2 bg-brand-fill text-on-brand" : "border-border")}>
                 {active && <Check className="size-3.5" strokeWidth={3} />}
               </span>
             </motion.button>

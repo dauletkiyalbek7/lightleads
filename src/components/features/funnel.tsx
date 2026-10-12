@@ -13,10 +13,10 @@ import type { Totals } from "@/lib/metrics";
  * подписано число, а между ступенями — конверсия шага. Один оттенок, от светлого к тёмному.
  */
 const STEPS = [
-  { key: "impressions", width: 100, fill: "color-mix(in oklab, var(--brand) 26%, white)", dark: false },
-  { key: "clicks", width: 80, fill: "color-mix(in oklab, var(--brand) 50%, white)", dark: false },
-  { key: "leads", width: 60, fill: "color-mix(in oklab, var(--brand) 78%, white)", dark: true },
-  { key: "sales", width: 42, fill: "var(--brand)", dark: true },
+  { key: "impressions", width: 100, fill: "color-mix(in oklab, var(--brand-fill) 26%, white)", dark: false },
+  { key: "clicks", width: 80, fill: "color-mix(in oklab, var(--brand-fill) 50%, white)", dark: false },
+  { key: "leads", width: 60, fill: "color-mix(in oklab, var(--brand-fill) 78%, white)", dark: true },
+  { key: "sales", width: 42, fill: "var(--brand-fill)", dark: true },
 ] as const;
 
 export function Funnel({ totals }: { totals: Totals }) {
@@ -39,7 +39,7 @@ export function Funnel({ totals }: { totals: Totals }) {
               animate={{ width: `${step.width}%`, opacity: 1 }}
               transition={{ duration: 0.7, ease: EASE_OUT, delay: 0.1 + i * 0.08 }}
               className="flex h-14 min-w-36 items-center justify-between gap-3 rounded-2xl px-4"
-              style={{ background: step.fill, color: step.dark ? "#fff" : "#101828" }}
+              style={{ background: step.fill, color: step.dark ? "var(--brand-on)" : "#101828" }}
             >
               <span className="truncate text-[13px] font-medium">{t.dashboard.funnelSteps[step.key]}</span>
               <span className="num font-display text-sm font-semibold">{formatInt(value)}</span>
