@@ -153,7 +153,7 @@ function SaleDetail({ sale, onClose }: { sale: Sale | null; onClose: () => void 
                 return (
                   <li key={lead.id} className="relative flex gap-3 pb-4 last:pb-0">
                     {i < attribution.history.length - 1 && <span className="absolute top-4 left-[7px] h-full w-px bg-border" />}
-                    <span className={cn("relative mt-1 size-[15px] shrink-0 rounded-full border-[3px] border-card", winner ? "bg-brand shadow-[0_0_0_3px_rgba(109,91,255,0.2)]" : "bg-subtle/60")} />
+                    <span className={cn("relative mt-1 size-[15px] shrink-0 rounded-full border-[3px] border-card", winner ? "bg-brand shadow-halo" : "bg-subtle/60")} />
                     <div className="min-w-0 flex-1">
                       <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium">
                         {adName(lead.adId)}

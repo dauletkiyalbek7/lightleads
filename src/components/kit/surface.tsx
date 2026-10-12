@@ -33,6 +33,8 @@ export function Section({ title, hint, action, children, className, bodyClassNam
 const TONES = {
   brand: "bg-brand-soft text-brand",
   coral: "bg-coral/12 text-coral",
+  /** Цвет серии «Расход» — совпадает с линией на графике в любой теме */
+  spend: "bg-series-spend/12 text-series-spend",
   sun: "bg-sun/18 text-[#B26A00]",
   success: "bg-success/12 text-success",
   blue: "bg-brand-2/12 text-brand-2",

@@ -27,7 +27,7 @@ import { useApp } from "@/lib/store";
 
 const TOP_CREATIVES = 5;
 const DASHBOARD_ADVICE = 3;
-const COLORS = { spend: "#FF5C7A", leads: "#3D8BFF", sales: "#FFB020", revenue: "#6D5BFF", profit: "#12B76A" } as const;
+const COLORS = { spend: "var(--series-spend)", leads: "#3D8BFF", sales: "#FFB020", revenue: "var(--series-revenue)", profit: "#12B76A" } as const;
 
 type ChartView = "chart" | "table";
 
@@ -87,7 +87,7 @@ export default function DashboardPage() {
       {/* KPI: на телефоне — горизонтальный скролл */}
       <Stagger className="no-scrollbar -mx-4 flex snap-x gap-3 overflow-x-auto px-4 py-1 md:mx-0 md:grid md:grid-cols-3 md:gap-4 md:overflow-visible md:px-0 2xl:grid-cols-6">
         {[
-          <KpiCard key="spend" label={t.metric.spend} icon={<Wallet />} tone="coral" color={COLORS.spend} money={money("spend")} delta={delta(c.spend, p.spend)} good="none" spark={spark.spend} />,
+          <KpiCard key="spend" label={t.metric.spend} icon={<Wallet />} tone="spend" color={COLORS.spend} money={money("spend")} delta={delta(c.spend, p.spend)} good="none" spark={spark.spend} />,
           <KpiCard key="leads" label={t.metric.leads} icon={<Users />} tone="blue" color={COLORS.leads} count={period.total.leads} delta={delta(period.total.leads, previous.total.leads)} spark={spark.leads} />,
           <KpiCard key="sales" label={t.metric.sales} icon={<ShoppingBag />} tone="sun" color={COLORS.sales} count={period.total.sales} delta={delta(period.total.sales, previous.total.sales)} spark={spark.sales} />,
           <KpiCard key="revenue" label={t.metric.revenue} icon={<Banknote />} tone="brand" color={COLORS.revenue} money={money("revenue")} delta={delta(c.revenue, p.revenue)} spark={spark.revenue} />,

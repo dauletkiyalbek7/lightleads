@@ -13,10 +13,10 @@ import type { Totals } from "@/lib/metrics";
  * подписано число, а между ступенями — конверсия шага. Один оттенок, от светлого к тёмному.
  */
 const STEPS = [
-  { key: "impressions", width: 100, fill: "#DAD5FF", dark: false },
-  { key: "clicks", width: 80, fill: "#B5ABFF", dark: false },
-  { key: "leads", width: 60, fill: "#8C7DFF", dark: true },
-  { key: "sales", width: 42, fill: "#6D5BFF", dark: true },
+  { key: "impressions", width: 100, fill: "color-mix(in oklab, var(--brand) 26%, white)", dark: false },
+  { key: "clicks", width: 80, fill: "color-mix(in oklab, var(--brand) 50%, white)", dark: false },
+  { key: "leads", width: 60, fill: "color-mix(in oklab, var(--brand) 78%, white)", dark: true },
+  { key: "sales", width: 42, fill: "var(--brand)", dark: true },
 ] as const;
 
 export function Funnel({ totals }: { totals: Totals }) {

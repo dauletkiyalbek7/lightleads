@@ -1,8 +1,9 @@
 "use client";
 
 import { AnimatePresence } from "framer-motion";
-import { FileSpreadsheet, MessageCircle, Plus, RefreshCw, Sparkles, Trash2, TriangleAlert, Workflow } from "lucide-react";
+import { Check, FileSpreadsheet, MessageCircle, Plus, RefreshCw, Sparkles, Trash2, TriangleAlert, Workflow } from "lucide-react";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useTheme } from "@/hooks/use-theme";
 import { toast } from "sonner";
 import { z } from "zod";
 import { WorkspaceAvatar } from "@/components/shell/workspace-switcher";
@@ -22,6 +23,7 @@ import { addDays, formatDate } from "@/lib/dates";
 import { CURRENCY_SYMBOL, formatMoney, formatNumber } from "@/lib/format";
 import { DEMO_WORKSPACE_KEY, ingestExample, INGEST_PATH, SITE_SNIPPET, UTM_TEMPLATES } from "@/lib/snippets";
 import { useApp } from "@/lib/store";
+import { THEME_SWATCH, THEMES } from "@/lib/theme";
 import type { Product } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -506,9 +508,33 @@ function WorkspaceSettings() {
   const { workspace } = useApp();
   const s = t.settings.workspace;
   const [name, setName] = useState(workspace.name);
+  const [theme, setTheme] = useTheme();
   useEffect(() => setName(workspace.name), [workspace.name]);
   return (
     <div className="grid gap-4 md:gap-6 lg:grid-cols-2">
+      <Section title={s.themeTitle} hint={s.themeHint} className="lg:col-span-2">
+        <div className="grid gap-2.5 sm:grid-cols-3">
+          {THEMES.map((key) => {
+            const active = theme === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setTheme(key)}
+                aria-pressed={active}
+                className={cn(
+                  "flex min-h-16 items-center gap-3 rounded-2xl border p-3 text-left outline-none transition focus-visible:ring-4 focus-visible:ring-brand/25",
+                  active ? "border-brand bg-brand-soft/60" : "border-border hover:border-brand/40",
+                )}
+              >
+                <span className="size-10 shrink-0 rounded-[14px] shadow-card" style={{ background: THEME_SWATCH[key] }} />
+                <span className="flex-1 text-sm font-semibold">{s.themes[key]}</span>
+                {active && <Check className="size-5 text-brand" />}
+              </button>
+            );
+          })}
+        </div>
+      </Section>
       <Section title={s.title}>
         <div className="space-y-4">
           <Field label={s.name}>

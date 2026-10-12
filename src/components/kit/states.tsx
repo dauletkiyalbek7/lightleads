@@ -67,8 +67,8 @@ function EmptyArt() {
     <svg viewBox="0 0 220 150" className="h-36 w-auto" aria-hidden="true">
       <defs>
         <linearGradient id="ea-a" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#6D5BFF" />
-          <stop offset="1" stopColor="#3D8BFF" />
+          <stop offset="0" stopColor="var(--brand)" />
+          <stop offset="1" stopColor="var(--brand-2)" />
         </linearGradient>
         <linearGradient id="ea-b" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stopColor="#FF5C7A" />

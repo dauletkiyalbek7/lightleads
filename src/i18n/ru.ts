@@ -516,6 +516,9 @@ export const ru = {
       emailError: "Проверьте email",
     },
     workspace: {
+      themeTitle: "Оформление",
+      themeHint: "Фирменный цвет интерфейса. Сохраняется в этом браузере.",
+      themes: { orange: "Оранжевый", green: "Зелёный", violet: "Фиолетовый" },
       title: "Workspace",
       name: "Название компании",
       timezone: "Часовой пояс",

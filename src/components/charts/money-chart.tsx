@@ -11,10 +11,10 @@ import { formatDayLong, formatDayShort } from "@/lib/dates";
 import { formatCompactMoney, formatInt, formatMoney } from "@/lib/format";
 import type { Currency } from "@/lib/types";
 
-/** Проверено validate_palette.js: фиолетовый и коралловый различимы при всех типах дальтонизма. */
+/** Цвета серий берутся из темы (globals.css); каждая пара проверена на различимость при дальтонизме. */
 export const SERIES = {
-  revenue: { color: "#6D5BFF", label: t.metric.revenue },
-  spend: { color: "#FF5C7A", label: t.metric.spend },
+  revenue: { color: "var(--series-revenue)", label: t.metric.revenue },
+  spend: { color: "var(--series-spend)", label: t.metric.spend },
 } as const;
 
 const GRID = "#EEF0F6";

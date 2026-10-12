@@ -3,6 +3,7 @@ import { Onest, Unbounded } from "next/font/google";
 import { Providers } from "@/components/providers";
 import { t } from "@/i18n";
 import { APP } from "@/lib/config";
+import { themeInitScript } from "@/lib/theme";
 import "./globals.css";
 
 const onest = Onest({ variable: "--font-onest", subsets: ["latin", "cyrillic"], display: "swap" });
@@ -22,7 +23,11 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="ru" className={`${onest.variable} ${unbounded.variable}`}>
+    // suppressHydrationWarning: атрибут data-theme ставит скрипт до гидрации
+    <html lang="ru" className={`${onest.variable} ${unbounded.variable}`} suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
       <body className="antialiased">
         <Providers>{children}</Providers>
       </body>

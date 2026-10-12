@@ -14,7 +14,7 @@ const VARIANTS = {
   /** Основная кнопка: переливающийся градиент, цветная тень */
   primary: "btn-shimmer text-white shadow-brand hover:shadow-brand-lg",
   secondary: "border border-border bg-card text-foreground shadow-card hover:shadow-lift",
-  soft: "bg-brand-soft text-accent-foreground hover:bg-[#e6e2ff]",
+  soft: "bg-brand-soft text-accent-foreground hover:bg-brand-soft-hover",
   ghost: "text-muted-foreground hover:bg-muted hover:text-foreground",
   danger: "bg-danger/10 text-danger hover:bg-danger/15",
 } as const;
