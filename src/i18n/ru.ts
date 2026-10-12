@@ -518,7 +518,7 @@ export const ru = {
     workspace: {
       themeTitle: "Оформление",
       themeHint: "Фирменный цвет интерфейса. Сохраняется в этом браузере.",
-      themes: { orange: "Оранжевый", green: "Зелёный", violet: "Фиолетовый" },
+      themes: { violet: "Фиолетовый", green: "Зелёный" },
       title: "Workspace",
       name: "Название компании",
       timezone: "Часовой пояс",

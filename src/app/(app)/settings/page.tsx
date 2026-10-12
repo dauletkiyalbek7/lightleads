@@ -513,7 +513,7 @@ function WorkspaceSettings() {
   return (
     <div className="grid gap-4 md:gap-6 lg:grid-cols-2">
       <Section title={s.themeTitle} hint={s.themeHint} className="lg:col-span-2">
-        <div className="grid gap-2.5 sm:grid-cols-3">
+        <div className="grid gap-2.5 sm:grid-cols-2">
           {THEMES.map((key) => {
             const active = theme === key;
             return (

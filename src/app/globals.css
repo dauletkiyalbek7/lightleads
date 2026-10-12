@@ -131,20 +131,6 @@
   --sidebar-ring: var(--brand);
 }
 
-:root[data-theme="orange"] {
-  --brand: #e8530e;
-  --brand-2: #f97316;
-  --brand-3: #ff9a4d;
-  --brand-soft: #fff1e7;
-  --brand-soft-hover: #ffe3cf;
-  --brand-ink: #b0400a;
-  --brand-rgb: 232 83 14;
-  --series-revenue: #e8530e;
-  --series-spend: #6d5bff;
-  /* Предупреждение уводим в жёлтый, чтобы не сливалось с фирменным оранжевым */
-  --warning: #e0a100;
-}
-
 :root[data-theme="green"] {
   --brand: #0a9a6a;
   --brand-2: #0e9f9a;
