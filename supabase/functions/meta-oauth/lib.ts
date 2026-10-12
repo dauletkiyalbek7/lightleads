@@ -7,11 +7,15 @@ export const META_APP_ID = Deno.env.get("META_APP_ID") ?? "";
 export const META_APP_SECRET = Deno.env.get("META_APP_SECRET") ?? "";
 /** Необязательно: ID конфигурации Facebook Login for Business. Без него права передаются через scope. */
 export const META_LOGIN_CONFIG_ID = Deno.env.get("META_LOGIN_CONFIG_ID") ?? "";
-/** Необязательно: версия Graph API вида "v24.0". Пусто — версия по умолчанию для приложения. */
-const GRAPH_VERSION = Deno.env.get("META_GRAPH_VERSION") ?? "";
+/**
+ * Версия Graph API. Рекламный API отклоняет запросы без версии и со старой версией
+ * (ошибка #2635), поэтому она указана явно. Когда Meta снимет её с поддержки,
+ * задайте новую в секрете META_GRAPH_VERSION или поменяйте значение здесь.
+ */
+const GRAPH_VERSION = Deno.env.get("META_GRAPH_VERSION") || "v26.0";
 
-export const GRAPH_URL = `https://graph.facebook.com${GRAPH_VERSION ? `/${GRAPH_VERSION}` : ""}`;
-export const DIALOG_URL = `https://www.facebook.com${GRAPH_VERSION ? `/${GRAPH_VERSION}` : ""}/dialog/oauth`;
+export const GRAPH_URL = `https://graph.facebook.com/${GRAPH_VERSION}`;
+export const DIALOG_URL = `https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth`;
 export const REDIRECT_URI = `${SUPABASE_URL}/functions/v1/meta-oauth`;
 /** Только чтение рекламы. Права на лид-формы и страницы добавятся в Фазе 4. */
 export const META_SCOPES = ["ads_read"];

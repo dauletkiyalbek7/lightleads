@@ -78,6 +78,12 @@ async function start(caller: Caller, body: Body) {
   return { url: url.toString() };
 }
 
+/** Права, которые пользователь действительно выдал приложению. */
+async function grantedScopes(token: string): Promise<string[]> {
+  const { data } = await graphGet<{ data?: { permission: string; status: string }[] }>("/me/permissions", {}, token);
+  return (data ?? []).filter((p) => p.status === "granted").map((p) => p.permission);
+}
+
 /** Facebook вернул браузер с кодом: меняем его на долгий токен и сохраняем зашифрованным. */
 async function callback(url: URL): Promise<Response> {
   const state = await verifyState<State>(url.searchParams.get("state") ?? "");
@@ -104,6 +110,10 @@ async function callback(url: URL): Promise<Response> {
       fb_exchange_token: short.access_token,
     });
     const me = await graphGet<{ id: string; name?: string }>("/me", { fields: "id,name" }, long.access_token);
+    const granted = await grantedScopes(long.access_token);
+    if (!META_SCOPES.every((scope) => granted.includes(scope))) {
+      return back("error", "Facebook не выдал право на чтение рекламы (ads_read). Добавьте его в приложении Meta и подключите заново.");
+    }
 
     const { data: connection, error } = await admin
       .from("ad_connections")
@@ -114,7 +124,7 @@ async function callback(url: URL): Promise<Response> {
           status: "active",
           external_user_id: me.id,
           external_user_name: me.name ?? "",
-          scopes: META_SCOPES,
+          scopes: granted,
           token_expires_at: long.expires_in ? new Date(Date.now() + long.expires_in * SECOND_MS).toISOString() : null,
           connected_by: state.u,
           updated_at: new Date().toISOString(),
@@ -267,7 +277,8 @@ async function syncStep(caller: Caller, body: Body) {
       .eq("workspace_id", workspaceId);
     return { ok: true };
   }
-  const { token } = await connectionToken(workspaceId);
+  // Курсы валют берутся у Нацбанка: токен Meta для них не нужен
+  const token = step === "rates" ? "" : (await connectionToken(workspaceId)).token;
   return runStep(workspaceId, step, body, token);
 }
 
@@ -342,7 +353,11 @@ Deno.serve(async (req: Request) => {
     if (!action) throw new HttpError(400, "unknown_action");
     return json(await action(await getCaller(req), body));
   } catch (error) {
-    if (error instanceof HttpError) return json({ error: error.code, detail: error.detail }, error.status);
+    if (error instanceof HttpError) {
+      // Причину ошибок Meta и базы пишем в журнал функции: по нему видно, что случилось у пользователя
+      if (error.status >= 500) console.error("meta-oauth failed:", error.code, error.detail ?? "");
+      return json({ error: error.code, detail: error.detail }, error.status);
+    }
     console.error(error);
     return json({ error: "internal" }, 500);
   }
