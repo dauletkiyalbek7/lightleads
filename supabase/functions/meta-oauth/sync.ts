@@ -5,7 +5,6 @@ import { admin, graphGet, graphList, HttpError } from "./lib.ts";
 
 export const SUPPORTED_CURRENCIES = ["USD", "KZT"];
 const UPSERT_CHUNK = 500;
-const IDS_PER_REQUEST = 50;
 const THUMBNAILS_PER_STEP = 20;
 const THUMBNAIL_SIZE = { thumbnail_width: "600", thumbnail_height: "750" };
 /** Meta отдаёт бюджеты в минимальных единицах валюты (центы, тиыны). */
@@ -40,7 +39,7 @@ interface GraphAd extends Named {
   campaign_id: string;
   effective_status?: string;
   created_time?: string;
-  creative?: { id: string };
+  creative?: GraphCreative;
 }
 interface GraphCreative extends Named {
   title?: string;
@@ -151,19 +150,13 @@ export async function syncStructure(account: Account, token: string): Promise<nu
     for (const [externalId, id] of await upsertMap("adsets", rows, "campaign_id,external_id")) adsetIds.set(externalId, id);
   }
 
-  const ads = await graphList<GraphAd>(`${path}/ads`, { fields: "id,name,adset_id,campaign_id,effective_status,created_time,creative{id}", limit: "500" }, token);
-
-  // Креативы читаем пачками по ID: так можно попросить превью нужного размера
-  const creativeExternalIds = [...new Set(ads.flatMap((ad) => (ad.creative?.id ? [ad.creative.id] : [])))];
-  const creatives: GraphCreative[] = [];
-  for (const ids of chunk(creativeExternalIds, IDS_PER_REQUEST)) {
-    const found = await graphGet<Record<string, GraphCreative>>(
-      "/",
-      { ids: ids.join(","), fields: "id,name,title,body,video_id,object_type,call_to_action_type" },
-      token,
-    );
-    creatives.push(...Object.values(found));
-  }
+  // Креатив приходит вложенным в объявление: запрос нескольких объектов по ?ids= в v26.0 отключён
+  const ads = await graphList<GraphAd>(
+    `${path}/ads`,
+    { fields: "id,name,adset_id,campaign_id,effective_status,created_time,creative{id,name,title,body,video_id,object_type,call_to_action_type}", limit: "200" },
+    token,
+  );
+  const creatives = [...new Map(ads.flatMap((ad) => (ad.creative?.id ? [[ad.creative.id, ad.creative] as const] : []))).values()];
   const adNameByCreative = new Map(ads.flatMap((ad) => (ad.creative?.id ? [[ad.creative.id, ad.name ?? ""] as const] : [])));
   const creativeIds = await upsertMap(
     "creatives",
@@ -307,14 +300,10 @@ export async function syncThumbnails(account: Account, token: string): Promise<{
     .limit(THUMBNAILS_PER_STEP);
   if (!pending?.length) return { done: 0, remaining: 0 };
 
-  const found = await graphGet<Record<string, GraphCreative>>(
-    "/",
-    { ids: pending.map((c) => c.external_id).join(","), fields: "thumbnail_url,image_url", ...THUMBNAIL_SIZE },
-    token,
-  );
   await Promise.all(
     pending.map(async (creative) => {
-      const source = found[creative.external_id];
+      // Свежую ссылку на превью спрашиваем у каждого креатива отдельно; сбой одного не мешает остальным
+      const source = await graphGet<GraphCreative>(`/${creative.external_id}`, { fields: "thumbnail_url,image_url", ...THUMBNAIL_SIZE }, token).catch(() => null);
       const url = source?.thumbnail_url ?? source?.image_url;
       let path = NO_THUMBNAIL;
       if (url) {

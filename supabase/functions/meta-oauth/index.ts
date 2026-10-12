@@ -35,6 +35,9 @@ const SECOND_MS = 1000;
 const DAY_MS = 24 * 60 * 60 * SECOND_MS;
 /** Плановое обновление перечитывает последние дни: Meta пересчитывает статистику задним числом. */
 const CRON_LOOKBACK_DAYS = 3;
+/** Наибольшая глубина догрузки истории и размер одного запроса статистики, дней. */
+const MAX_LOOKBACK_DAYS = 90;
+const INSIGHTS_WINDOW_DAYS = 10;
 /** Запас до лимита времени Edge Function: дальше cron продолжит в следующий запуск. */
 const CRON_BUDGET_MS = 110 * SECOND_MS;
 const MAX_DETAIL_LENGTH = 200;
@@ -282,15 +285,27 @@ async function syncStep(caller: Caller, body: Body) {
   return runStep(workspaceId, step, body, token);
 }
 
-/** Плановое обновление всех подключённых кабинетов. Вызывает pg_cron. */
-async function cron(req: Request) {
+/** Период «последние days дней» окнами от свежих к старым. */
+function insightWindows(days: number): { since: string; until: string }[] {
+  const windows = [];
+  for (let offset = 0; offset < days; offset += INSIGHTS_WINDOW_DAYS) {
+    windows.push({ since: isoDay(Math.min(offset + INSIGHTS_WINDOW_DAYS, days) - 1), until: isoDay(offset) });
+  }
+  return windows;
+}
+
+/**
+ * Плановое обновление всех подключённых кабинетов. Вызывает pg_cron.
+ * Необязательный параметр days (до 90) догружает историю глубже обычных трёх дней.
+ */
+async function cron(req: Request, body: Body) {
   const { data: secret } = await admin.from("app_secrets").select("value").eq("name", "cron_secret").maybeSingle();
   if (!secret?.value || req.headers.get("x-cron-secret") !== secret.value) throw new HttpError(401, "unauthorized");
 
   const startedAt = Date.now();
-  const since = isoDay(CRON_LOOKBACK_DAYS);
-  const until = isoDay();
-  await syncRates(since, until);
+  const days = Math.min(Math.max(Number(body.days) || CRON_LOOKBACK_DAYS + 1, 1), MAX_LOOKBACK_DAYS);
+  const windows = insightWindows(days);
+  await syncRates(isoDay(days - 1), isoDay());
 
   const { data: accounts } = await admin
     .from("ad_accounts")
@@ -311,7 +326,10 @@ async function cron(req: Request) {
       if (!tokens.has(account.workspace_id)) tokens.set(account.workspace_id, (await connectionToken(account.workspace_id)).token);
       const token = tokens.get(account.workspace_id)!;
       rows += await syncStructure(account, token);
-      rows += await syncInsights(account, token, since, until);
+      for (const window of windows) {
+        if (Date.now() - startedAt > CRON_BUDGET_MS) break;
+        rows += await syncInsights(account, token, window.since, window.until);
+      }
       await syncThumbnails(account, token);
       synced += 1;
     } catch (error) {
@@ -348,7 +366,7 @@ Deno.serve(async (req: Request) => {
     if (req.method !== "POST") throw new HttpError(405, "method_not_allowed");
     const body = (await req.json().catch(() => ({}))) as Body;
     const name = String(body.action ?? "");
-    if (name === "cron") return json(await cron(req));
+    if (name === "cron") return json(await cron(req, body));
     const action = ACTIONS[name];
     if (!action) throw new HttpError(400, "unknown_action");
     return json(await action(await getCaller(req), body));
