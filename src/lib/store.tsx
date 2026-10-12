@@ -7,10 +7,12 @@ import { aggregate, type Aggregate } from "./analytics";
 import { attributeAll, type Attribution } from "./attribution";
 import { toDual } from "./currency";
 import { addDays, previousPeriod, resolvePeriod, todayISO, type PeriodPreset } from "./dates";
+import { REFRESH_SYNC_DAYS, runMetaSync } from "./meta-api";
 import { DEFAULT_MARGIN_PCT, DEMO_SALES_CURRENCY, generateDataset } from "./mock/seed";
 import { detectSignals, suggestTargets, type Signal } from "./rules";
 import { scoreCreatives, type CreativeStat } from "./score";
 import { getBrowserSupabase } from "./supabase/client";
+import { loadWorkspaceData, type WorkspaceData } from "./supabase/dataset";
 import { rowToMember, settingsToRow, type MemberRow } from "./supabase/rows";
 import { callTeam, type TeamResult } from "./team-api";
 import type {
@@ -97,6 +99,12 @@ interface AppState {
   workspace: Workspace;
   setWorkspaceId: (id: string) => void;
   renameWorkspace: (name: string) => Promise<boolean>;
+  /** Перечитывает данные workspace из базы: после подключения кабинета или синхронизации. */
+  reloadData: () => Promise<void>;
+  /** Реклама подключена, а продажи ещё нет: прибыль и ROMI пока считаются без выручки. */
+  salesPending: boolean;
+  /** Куда вести кнопку «Подключить» из пустых экранов. */
+  connectHref: string;
   ds: Dataset;
   isEmpty: boolean;
   sales: Sale[];
@@ -151,6 +159,7 @@ export function AppProvider({ children, session = null }: { children: ReactNode;
   const workspaces = demoMode ? DEMO_WORKSPACES : realWorkspaces;
   const [workspaceId, setWorkspaceIdState] = useState(workspaces[0]?.id ?? "");
   const [realMembers, setRealMembers] = useState<Member[]>([]);
+  const [real, setReal] = useState<WorkspaceData | null>(null);
   const [sales, setSales] = useState<Sale[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
@@ -178,7 +187,9 @@ export function AppProvider({ children, session = null }: { children: ReactNode;
   const workspace = workspaces.find((w) => w.id === workspaceId) ?? workspaces[0];
   const settings = demoMode ? demoSettings : (workspace.settings ?? DEFAULT_SETTINGS);
   const canManage = demoMode || workspace.role === "owner" || user?.isPlatformAdmin === true;
-  const isEmpty = demoMode ? workspaceId === EMPTY_WORKSPACE_ID : workspace.demoData === false;
+  // Workspace с подключённой рекламой читает данные из базы, остальные показывают демо-набор
+  const usesRealData = !demoMode && workspace.demoData === false;
+  const isEmpty = demoMode ? workspaceId === EMPTY_WORKSPACE_ID : usesRealData && (real?.dataset.accounts.length ?? 0) === 0;
 
   // Возвращаем workspace, выбранный в прошлый раз
   useEffect(() => {
@@ -216,14 +227,19 @@ export function AppProvider({ children, session = null }: { children: ReactNode;
   }, [realWorkspaceId, loadMembers]);
   const ds = useMemo<Dataset>(() => {
     if (!demo) return blankDataset(PLACEHOLDER_DAY);
+    if (usesRealData) return real?.dataset ?? blankDataset(demo.today);
     return isEmpty ? blankDataset(demo.today, demo.rates, demo.members.slice(0, 1)) : demo;
-  }, [demo, isEmpty]);
+  }, [demo, isEmpty, usesRealData, real]);
 
-  const wsSales = isEmpty ? NO_SALES : sales;
-  const wsProducts = isEmpty ? NO_PRODUCTS : products;
+  // Продажи и товары из базы появятся в Фазе 5; до тех пор у настоящих данных их нет
+  const wsSales = isEmpty || usesRealData ? NO_SALES : sales;
+  const wsProducts = isEmpty || usesRealData ? NO_PRODUCTS : products;
 
   const range = useMemo(() => resolvePeriod(preset, today || PLACEHOLDER_DAY, custom), [preset, today, custom]);
   const previousRange = useMemo(() => previousPeriod(range), [range]);
+
+  /** Реклама уже настоящая, а продаж в базе ещё нет (до Фазы 5). */
+  const salesPending = usesRealData && wsSales.length === 0;
 
   const attributions = useMemo(
     () => attributeAll(wsSales, ds.leads, { model: settings.attributionModel, windowDays: settings.attributionWindow }),
@@ -239,10 +255,13 @@ export function AppProvider({ children, session = null }: { children: ReactNode;
     const suggested = suggestTargets(period.total);
     const targetCac = toDual(settings.targetCac ?? suggested.cacKzt, settings.salesCurrency, range.to, ds.rates);
     const targetRomi = (settings.targetRomi ?? suggested.romiPct) / 100;
-    const stats = scoreCreatives({ ads: ds.ads, creatives: ds.creatives, period, recent, prior, targetCac, targetRomi });
-    const signals = detectSignals({ ds, period, recent, prior, stats, targetCac, targetRomi });
+    const scored = scoreCreatives({ ads: ds.ads, creatives: ds.creatives, period, recent, prior, targetCac, targetRomi });
+    // Пока продажи не подключены, «нет продаж» не значит «реклама не окупается»:
+    // выводы о сливе бюджета и советы «отключить» были бы ложными.
+    const stats = salesPending ? scored.map((stat) => ({ ...stat, badge: "lowdata" as const })) : scored;
+    const signals = salesPending ? [] : detectSignals({ ds, period, recent, prior, stats, targetCac, targetRomi });
     return { period, previous, recent, prior, stats, signals, targetCac, targetRomi, suggested };
-  }, [ds, wsSales, attributions, range, previousRange, settings.targetCac, settings.targetRomi, settings.salesCurrency]);
+  }, [ds, wsSales, attributions, range, previousRange, settings.targetCac, settings.targetRomi, settings.salesCurrency, salesPending]);
 
   const setPeriod = useCallback((next: PeriodPreset, nextCustom?: DateRange) => {
     setPreset(next);
@@ -286,6 +305,29 @@ export function AppProvider({ children, session = null }: { children: ReactNode;
     },
     [demoMode, workspace.id, patchWorkspace, saveWorkspace],
   );
+
+  const loadReal = useCallback(async (id: string, day: string) => {
+    try {
+      setReal(await loadWorkspaceData(id, day));
+    } catch {
+      toast.error(t.common.loadFailed);
+      setReal({ dataset: blankDataset(day), connections: [], lastSyncedAt: 0 });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!usesRealData || !today) return;
+    setReal(null);
+    void loadReal(workspace.id, today);
+  }, [usesRealData, workspace.id, today, loadReal]);
+
+  const reloadData = useCallback(async () => {
+    if (demoMode || !today) return;
+    const { data } = await getBrowserSupabase().from("workspaces").select("demo_data").eq("id", workspace.id).maybeSingle();
+    // Первый подключённый кабинет выключает демо-данные: эффект выше сам загрузит настоящие
+    if (data?.demo_data === false && workspace.demoData !== false) patchWorkspace(workspace.id, { demoData: false });
+    else if (data?.demo_data === false) await loadReal(workspace.id, today);
+  }, [demoMode, today, workspace.id, workspace.demoData, patchWorkspace, loadReal]);
 
   const signOut = useCallback(async () => {
     await getBrowserSupabase().auth.signOut();
@@ -339,16 +381,26 @@ export function AppProvider({ children, session = null }: { children: ReactNode;
 
   const demoMembers = isEmpty ? members.slice(0, 1) : members;
 
+  const realAccounts = usesRealData ? real?.dataset.accounts : undefined;
   const syncNow = useCallback(() => {
     setSyncing(true);
-    window.setTimeout(() => {
+    if (!realAccounts) {
+      window.setTimeout(() => {
+        setSyncing(false);
+        setLastSyncedAt(Date.now());
+      }, SYNC_DEMO_MS);
+      return;
+    }
+    const metaAccounts = realAccounts.filter((a) => a.platform === "meta").map((a) => ({ id: a.id, name: a.name }));
+    void runMetaSync(workspace.id, metaAccounts, today, REFRESH_SYNC_DAYS).then(async (result) => {
+      if (!result.ok) toast.error(result.detail ?? t.meta.errors[result.error] ?? t.common.genericError);
+      await loadReal(workspace.id, today);
       setSyncing(false);
-      setLastSyncedAt(Date.now());
-    }, SYNC_DEMO_MS);
-  }, []);
+    });
+  }, [realAccounts, workspace.id, today, loadReal]);
 
   const value: AppState = {
-    ready: demo !== null,
+    ready: demo !== null && (!usesRealData || real !== null),
     today,
     demoMode,
     user,
@@ -358,6 +410,9 @@ export function AppProvider({ children, session = null }: { children: ReactNode;
     workspace,
     setWorkspaceId,
     renameWorkspace,
+    reloadData,
+    salesPending,
+    connectHref: demoMode ? "/onboarding" : "/settings",
     ds,
     isEmpty,
     sales: wsSales,
@@ -383,7 +438,7 @@ export function AppProvider({ children, session = null }: { children: ReactNode;
     removeMember,
     saleDialogOpen,
     setSaleDialogOpen,
-    lastSyncedAt,
+    lastSyncedAt: usesRealData ? (real?.lastSyncedAt ?? 0) : lastSyncedAt,
     syncing,
     syncNow,
   };

@@ -20,11 +20,13 @@ interface CreativeThumbProps {
 /**
  * Превью креатива. В демо реальных файлов нет, поэтому обложка генерируется из оттенка креатива.
  * Видео «проигрывается» при наведении на родителя с классом `group`: наезд камеры и полоса прогресса.
- * В Фазе 2 сюда придут превью, скачанные в Supabase Storage.
+ * У подключённых кабинетов показывается превью, скачанное в Supabase Storage.
  */
 export function CreativeThumb({ creative, platform, variant = "card", className }: CreativeThumbProps) {
-  const { hue, type } = creative;
+  const { hue, type, thumbnailUrl } = creative;
   const background = `linear-gradient(150deg, hsl(${hue} 88% 70%) 0%, hsl(${(hue + HUE_SHIFT) % 360} 86% 58%) 100%)`;
+  // Настоящее превью кладём поверх градиента: если картинка не загрузится, останется обложка
+  const photo = thumbnailUrl ? { backgroundImage: `url("${thumbnailUrl}")`, backgroundSize: "cover", backgroundPosition: "center" } : undefined;
   const TypeIcon = type === "video" ? Play : type === "carousel" ? Layers : ImageIcon;
 
   if (variant === "mini") {
@@ -33,18 +35,28 @@ export function CreativeThumb({ creative, platform, variant = "card", className 
         className={cn("relative inline-flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-[14px] text-white", className)}
         style={{ background }}
       >
-        <span className="absolute -top-3 -right-3 size-8 rounded-full bg-white/25 blur-[2px]" />
-        <TypeIcon className={cn("relative size-[18px]", type === "video" && "fill-white")} />
+        {photo ? (
+          <span className="absolute inset-0" style={photo} />
+        ) : (
+          <>
+            <span className="absolute -top-3 -right-3 size-8 rounded-full bg-white/25 blur-[2px]" />
+            <TypeIcon className={cn("relative size-[18px]", type === "video" && "fill-white")} />
+          </>
+        )}
       </span>
     );
   }
 
   return (
     <div className={cn("relative aspect-[4/5] overflow-hidden rounded-2xl text-white", className)} style={{ background }}>
-      <div className={cn("absolute inset-0", type === "video" && "group-hover:thumb-play")}>
-        <span className="absolute -top-8 -right-6 size-32 rounded-full bg-white/25 blur-xl" />
-        <span className="absolute bottom-10 -left-10 size-36 rounded-full bg-black/10 blur-2xl" />
-        <span className="absolute top-1/3 left-1/2 size-20 -translate-x-1/2 rounded-[28px] bg-white/15 backdrop-blur-[2px]" />
+      <div className={cn("absolute inset-0", type === "video" && "group-hover:thumb-play")} style={photo}>
+        {!photo && (
+          <>
+            <span className="absolute -top-8 -right-6 size-32 rounded-full bg-white/25 blur-xl" />
+            <span className="absolute bottom-10 -left-10 size-36 rounded-full bg-black/10 blur-2xl" />
+            <span className="absolute top-1/3 left-1/2 size-20 -translate-x-1/2 rounded-[28px] bg-white/15 backdrop-blur-[2px]" />
+          </>
+        )}
       </div>
       <div className="absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-black/10" />
 

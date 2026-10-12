@@ -91,6 +91,8 @@ export interface Creative {
   cta: string;
   /** Оттенок для сгенерированного превью (в демо нет реальных файлов). */
   hue: number;
+  /** Превью из Supabase Storage; в демо его нет. */
+  thumbnailUrl?: string;
   durationSec: number | null;
 }
 
@@ -179,6 +181,14 @@ export interface Member {
   email: string;
   role: "owner" | "member";
   status: "active" | "invited";
+}
+
+/** Подключение рекламной платформы (вход через Facebook и т. п.). */
+export interface AdConnection {
+  platform: Platform;
+  status: "active" | "token_expired" | "disconnected";
+  /** Имя пользователя платформы, через которого выдан доступ. */
+  userName: string;
 }
 
 export interface SyncRun {

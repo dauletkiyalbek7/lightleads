@@ -32,7 +32,7 @@ const COLORS = { spend: "var(--series-spend)", leads: "#3D8BFF", sales: "#FFB020
 type ChartView = "chart" | "table";
 
 export default function DashboardPage() {
-  const { ready, isEmpty, analytics, currency, setWorkspaceId, workspaces } = useApp();
+  const { ready, isEmpty, analytics, currency, setWorkspaceId, workspaces, connectHref, demoMode } = useApp();
   const [view, setView] = useState<ChartView>("chart");
   const { period, previous, stats, signals } = analytics;
 
@@ -66,10 +66,13 @@ export default function DashboardPage() {
           text={t.dashboard.emptyText}
           action={
             <>
-              <Btn href="/onboarding">{t.dashboard.emptyAction}</Btn>
-              <Btn variant="secondary" onClick={() => setWorkspaceId(workspaces[0].id)}>
-                {t.dashboard.emptySecondary}
-              </Btn>
+              <Btn href={connectHref}>{t.dashboard.emptyAction}</Btn>
+              {/* Демо-workspace есть только у гостя */}
+              {demoMode && (
+                <Btn variant="secondary" onClick={() => setWorkspaceId(workspaces[0].id)}>
+                  {t.dashboard.emptySecondary}
+                </Btn>
+              )}
             </>
           }
         />

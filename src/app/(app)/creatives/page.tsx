@@ -36,7 +36,7 @@ function sortValue(s: CreativeStat, key: SortKey, currency: Currency): number {
 }
 
 export default function CreativesPage() {
-  const { ready, isEmpty, ds, analytics, currency } = useApp();
+  const { ready, isEmpty, ds, analytics, currency, connectHref } = useApp();
   const [platform, setPlatform] = useState<Platform | "all">("all");
   const [badge, setBadge] = useState<CreativeBadge | "all">("all");
   const [sort, setSort] = useState<SortKey>("score");
@@ -57,7 +57,7 @@ export default function CreativesPage() {
   if (isEmpty) {
     return (
       <Surface>
-        <EmptyState title={t.dashboard.emptyTitle} text={t.dashboard.emptyText} action={<Btn href="/onboarding">{t.dashboard.emptyAction}</Btn>} />
+        <EmptyState title={t.dashboard.emptyTitle} text={t.dashboard.emptyText} action={<Btn href={connectHref}>{t.dashboard.emptyAction}</Btn>} />
       </Surface>
     );
   }

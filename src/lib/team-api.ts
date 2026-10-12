@@ -1,5 +1,4 @@
-import { FunctionsHttpError } from "@supabase/supabase-js";
-import { getBrowserSupabase } from "./supabase/client";
+import { callFunction, type FnResult } from "./supabase/functions";
 import type { Credentials } from "./types";
 
 /** Запросы к Edge Function `team` (supabase/functions/team): аккаунты и состав workspace. */
@@ -10,16 +9,6 @@ type TeamRequest =
   | { action: "reset_password"; userId: string }
   | { action: "delete_workspace"; workspaceId: string; confirmName: string };
 
-export type TeamResult<T> = { ok: true; data: T } | { ok: false; error: string };
+export type TeamResult<T> = FnResult<T>;
 
-const FALLBACK_ERROR = "internal";
-
-export async function callTeam<T = Credentials>(body: TeamRequest): Promise<TeamResult<T>> {
-  const { data, error } = await getBrowserSupabase().functions.invoke<T>("team", { body });
-  if (!error && data) return { ok: true, data };
-  if (error instanceof FunctionsHttpError) {
-    const payload = (await error.context.json().catch(() => null)) as { error?: string } | null;
-    return { ok: false, error: payload?.error ?? FALLBACK_ERROR };
-  }
-  return { ok: false, error: FALLBACK_ERROR };
-}
+export const callTeam = <T = Credentials>(body: TeamRequest) => callFunction<T>("team", body);

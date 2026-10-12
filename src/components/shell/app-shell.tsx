@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import { SaleDialog } from "@/components/features/sale-dialog";
@@ -21,7 +22,7 @@ const DESKTOP_QUERY = "(min-width: 1024px)";
  */
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { demoMode, workspace } = useApp();
+  const { demoMode, workspace, salesPending, isEmpty } = useApp();
   const isDesktop = useMediaQuery(DESKTOP_QUERY);
   const [mode, setMode] = useState<SidebarMode>("auto");
   const nav = currentNav(pathname);
@@ -45,8 +46,14 @@ export function AppShell({ children }: { children: ReactNode }) {
           )}
           {!demoMode && workspace.demoData && (
             <p className="mb-4 rounded-2xl border border-border bg-card px-4 py-3 text-[13px] leading-relaxed text-muted-foreground">
-              {t.common.demoDataNote}
+              {t.common.demoDataNote}{" "}
+              <Link href="/settings" className="font-semibold text-brand hover:underline">
+                {t.common.demoDataAction}
+              </Link>
             </p>
+          )}
+          {salesPending && !isEmpty && (
+            <p className="mb-4 rounded-2xl border border-border bg-card px-4 py-3 text-[13px] leading-relaxed text-muted-foreground">{t.common.salesPendingNote}</p>
           )}
           {children}
         </main>

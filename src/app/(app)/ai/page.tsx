@@ -229,14 +229,14 @@ function ChatTab() {
 }
 
 export default function AiPage() {
-  const { ready, isEmpty } = useApp();
+  const { ready, isEmpty, connectHref } = useApp();
   const [tab, setTab] = useState<Tab>("advice");
 
   if (!ready) return <PageSkeleton />;
   if (isEmpty) {
     return (
       <Surface>
-        <EmptyState title={t.dashboard.emptyTitle} text={t.dashboard.emptyText} action={<Btn href="/onboarding">{t.dashboard.emptyAction}</Btn>} />
+        <EmptyState title={t.dashboard.emptyTitle} text={t.dashboard.emptyText} action={<Btn href={connectHref}>{t.dashboard.emptyAction}</Btn>} />
       </Surface>
     );
   }

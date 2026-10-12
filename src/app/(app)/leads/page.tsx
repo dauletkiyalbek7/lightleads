@@ -38,7 +38,7 @@ function SourceLabel({ lead }: { lead: Lead }) {
 }
 
 export default function LeadsPage() {
-  const { ready, isEmpty, ds, sales, range } = useApp();
+  const { ready, isEmpty, ds, sales, range, connectHref } = useApp();
   const [query, setQuery] = useState("");
   const [source, setSource] = useState<LeadSource | "all">("all");
   const [status, setStatus] = useState<StatusFilter>("all");
@@ -66,7 +66,7 @@ export default function LeadsPage() {
   if (isEmpty) {
     return (
       <Surface>
-        <EmptyState title={t.dashboard.emptyTitle} text={t.dashboard.emptyText} action={<Btn href="/onboarding">{t.dashboard.emptyAction}</Btn>} />
+        <EmptyState title={t.dashboard.emptyTitle} text={t.dashboard.emptyText} action={<Btn href={connectHref}>{t.dashboard.emptyAction}</Btn>} />
       </Surface>
     );
   }

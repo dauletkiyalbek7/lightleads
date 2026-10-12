@@ -7,6 +7,7 @@ import { useTheme } from "@/hooks/use-theme";
 import { toast } from "sonner";
 import { z } from "zod";
 import { CredentialsDialog } from "@/components/features/credentials-dialog";
+import { MetaConnection } from "@/components/features/meta-connect";
 import { WorkspaceAvatar } from "@/components/shell/workspace-switcher";
 import { PlatformIcon } from "@/components/kit/brand";
 import { Btn } from "@/components/kit/btn";
@@ -53,7 +54,7 @@ function Chip({ active, onClick, children }: { active: boolean; onClick: () => v
 }
 
 function Connections() {
-  const { ds, syncNow, syncing } = useApp();
+  const { ds, syncNow, syncing, demoMode } = useApp();
   const demo = () => toast(t.settings.connections.demoConnect);
   const s = t.settings.connections;
   return (
@@ -86,12 +87,17 @@ function Connections() {
                     <RefreshCw className={cn(syncing && "animate-spin")} />
                     {s.refresh}
                   </Btn>
-                  <Btn variant="ghost" size="sm" onClick={demo}>
-                    {s.reconnect}
-                  </Btn>
-                  <Btn variant="ghost" size="sm" className="text-danger hover:bg-danger/10 hover:text-danger" onClick={demo}>
-                    {s.disconnect}
-                  </Btn>
+                  {/* У настоящего подключения вход и отключение общие для всех кабинетов: они в блоке Meta ниже */}
+                  {demoMode && (
+                    <>
+                      <Btn variant="ghost" size="sm" onClick={demo}>
+                        {s.reconnect}
+                      </Btn>
+                      <Btn variant="ghost" size="sm" className="text-danger hover:bg-danger/10 hover:text-danger" onClick={demo}>
+                        {s.disconnect}
+                      </Btn>
+                    </>
+                  )}
                 </div>
               </li>
             ))}
@@ -99,16 +105,27 @@ function Connections() {
         ) : (
           <EmptyState compact title={t.dashboard.emptyTitle} text={t.dashboard.emptyText} />
         )}
-        <div className="mt-4 flex flex-wrap gap-2">
-          <Btn variant="secondary" onClick={demo}>
-            <PlatformIcon platform="meta" size="sm" />
-            {s.connectMeta}
-          </Btn>
-          <Btn variant="secondary" onClick={demo}>
-            <PlatformIcon platform="tiktok" size="sm" />
-            {s.connectTikTok}
-          </Btn>
-        </div>
+        {demoMode ? (
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Btn variant="secondary" onClick={demo}>
+              <PlatformIcon platform="meta" size="sm" />
+              {s.connectMeta}
+            </Btn>
+            <Btn variant="secondary" onClick={demo}>
+              <PlatformIcon platform="tiktok" size="sm" />
+              {s.connectTikTok}
+            </Btn>
+          </div>
+        ) : (
+          <div className="mt-4 space-y-3">
+            <MetaConnection />
+            <Btn variant="secondary" disabled>
+              <PlatformIcon platform="tiktok" size="sm" />
+              {s.connectTikTok}
+              <Pill tone="muted">{t.common.soon}</Pill>
+            </Btn>
+          </div>
+        )}
       </Section>
 
       <Section title={s.salesTitle}>

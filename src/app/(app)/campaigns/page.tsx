@@ -170,7 +170,7 @@ function NodeName({ node, expanded }: { node: TreeNode; expanded: boolean }) {
 }
 
 export default function CampaignsPage() {
-  const { ready, isEmpty, ds, analytics, currency } = useApp();
+  const { ready, isEmpty, ds, analytics, currency, connectHref } = useApp();
   const [filter, setFilter] = useState<TreeFilter>(DEFAULT_TREE_FILTER);
   const [visible, setVisible] = useState<ColumnKey[]>(DEFAULT_COLUMNS);
   const [sort, setSort] = useState<Sort>({ key: "spend", desc: true });
@@ -189,7 +189,7 @@ export default function CampaignsPage() {
   if (isEmpty) {
     return (
       <Surface>
-        <EmptyState title={t.dashboard.emptyTitle} text={t.dashboard.emptyText} action={<Btn href="/onboarding">{t.dashboard.emptyAction}</Btn>} />
+        <EmptyState title={t.dashboard.emptyTitle} text={t.dashboard.emptyText} action={<Btn href={connectHref}>{t.dashboard.emptyAction}</Btn>} />
       </Surface>
     );
   }
