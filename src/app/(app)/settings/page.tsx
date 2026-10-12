@@ -62,7 +62,7 @@ function Connections() {
         {ds.accounts.length ? (
           <ul className="grid gap-3 lg:grid-cols-2">
             {ds.accounts.map((a) => (
-              <li key={a.id} className="rounded-[20px] border border-border p-4">
+              <li key={a.id} className="min-w-0 rounded-[20px] border border-border p-4">
                 <div className="flex items-start gap-3">
                   <PlatformIcon platform={a.platform} size="lg" />
                   <div className="min-w-0 flex-1">
