@@ -41,6 +41,19 @@ npx tsc --noEmit   # проверка типов
 npm run build      # сборка для Vercel
 ```
 
+## Деплой
+
+Сайт: https://lightleads-indol.vercel.app (Vercel, проект `lightleads`).
+
+Каждый push в ветку `main` собирается и выкладывается автоматически. Если сборка из GitHub
+падает с ошибкой `git_info_fail` («Git information retrieval failed»), переподключите
+репозиторий и выложите напрямую:
+
+```bash
+npx vercel git disconnect && npx vercel git connect
+npx vercel deploy --prod
+```
+
 ## Стек
 
 Next.js 15 (App Router) · TypeScript strict · Tailwind CSS 4 · shadcn/ui · Framer Motion ·
