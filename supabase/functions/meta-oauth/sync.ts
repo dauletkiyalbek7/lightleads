@@ -1,9 +1,8 @@
 // Синхронизация Meta: структура кабинета, статистика по дням и превью креативов.
-// Каждый шаг — отдельный короткий вызов, чтобы уложиться в лимиты Edge Functions
-// и показывать пользователю прогресс первой загрузки.
-import { admin } from "../_shared/core.ts";
-import { type Account, now, num, pendingThumbnails, resolveReportedAds, saveInsights, storeThumbnail, upsertMap } from "../_shared/sync.ts";
-import { graphGet, graphList } from "./lib.ts";
+// Структура и статистика читаются по одной странице за вызов: в большом кабинете тысячи объявлений,
+// и целиком он не укладывается в лимит времени Edge Functions.
+import { type Account, idsByExternal, now, num, pendingThumbnails, type Progress, resolveReportedAds, saveInsights, storeThumbnail, upsertMap } from "../_shared/sync.ts";
+import { graphGet, graphPage } from "./lib.ts";
 
 const THUMBNAIL_SIZE = { thumbnail_width: "600", thumbnail_height: "750" };
 /** Meta отдаёт бюджеты в минимальных единицах валюты (центы, тиыны). */
@@ -84,16 +83,25 @@ function action(list: ActionStat[] | undefined, types: string[]): number {
   return 0;
 }
 
-/** Кампании, группы, объявления и креативы кабинета. */
-export async function syncStructure(account: Account, token: string): Promise<number> {
-  const base = { workspace_id: account.workspace_id, updated_at: now() };
-  const path = `/${account.external_id}`;
+/** Обход структуры идёт по частям в этом порядке: группам нужны кампании, объявлениям — группы. */
+const PARTS = ["campaigns", "adsets", "ads"] as const;
+type Part = (typeof PARTS)[number];
+/** Место остановки записывается как «часть:метка страницы». */
+const CURSOR_SEPARATOR = ":";
+// Креатив приходит вложенным в объявление: запрос нескольких объектов по ?ids= в v26.0 отключён
+const QUERY: Record<Part, Record<string, string>> = {
+  campaigns: { fields: "id,name,objective,effective_status,daily_budget", limit: "500" },
+  adsets: { fields: "id,name,campaign_id,effective_status", limit: "500" },
+  ads: { fields: "id,name,adset_id,campaign_id,effective_status,created_time,creative{id,name,title,body,video_id,object_type,call_to_action_type}", limit: "200" },
+};
 
-  const campaigns = await graphList<GraphCampaign>(`${path}/campaigns`, { fields: "id,name,objective,effective_status,daily_budget", limit: "500" }, token);
-  const campaignIds = await upsertMap(
+const base = (account: Account) => ({ workspace_id: account.workspace_id, updated_at: now() });
+
+async function saveCampaigns(account: Account, campaigns: GraphCampaign[]): Promise<number> {
+  await upsertMap(
     "campaigns",
     campaigns.map((c) => ({
-      ...base,
+      ...base(account),
       account_id: account.id,
       platform: "meta",
       external_id: c.id,
@@ -104,29 +112,30 @@ export async function syncStructure(account: Account, token: string): Promise<nu
     })),
     "account_id,external_id",
   );
+  return campaigns.length;
+}
 
-  const adsets = await graphList<GraphAdSet>(`${path}/adsets`, { fields: "id,name,campaign_id,effective_status", limit: "500" }, token);
-  const adsetIds = new Map<string, string>();
-  for (const [campaignExternalId, campaignId] of campaignIds) {
-    const rows = adsets
-      .filter((a) => a.campaign_id === campaignExternalId)
-      .map((a) => ({ ...base, campaign_id: campaignId, external_id: a.id, name: a.name ?? a.id, status: status(a.effective_status) }));
-    if (!rows.length) continue;
-    for (const [externalId, id] of await upsertMap("adsets", rows, "campaign_id,external_id")) adsetIds.set(externalId, id);
-  }
+async function saveAdSets(account: Account, adsets: GraphAdSet[]): Promise<number> {
+  const campaignIds = await idsByExternal("campaigns", "account_id", account.id, adsets.map((a) => a.campaign_id));
+  const rows = adsets.flatMap((a) => {
+    const campaignId = campaignIds.get(a.campaign_id);
+    return campaignId ? [{ ...base(account), campaign_id: campaignId, external_id: a.id, name: a.name ?? a.id, status: status(a.effective_status) }] : [];
+  });
+  await upsertMap("adsets", rows, "campaign_id,external_id");
+  return rows.length;
+}
 
-  // Креатив приходит вложенным в объявление: запрос нескольких объектов по ?ids= в v26.0 отключён
-  const ads = await graphList<GraphAd>(
-    `${path}/ads`,
-    { fields: "id,name,adset_id,campaign_id,effective_status,created_time,creative{id,name,title,body,video_id,object_type,call_to_action_type}", limit: "200" },
-    token,
-  );
+async function saveAds(account: Account, ads: GraphAd[]): Promise<number> {
+  const [campaignIds, adsetIds] = await Promise.all([
+    idsByExternal("campaigns", "account_id", account.id, ads.map((ad) => ad.campaign_id)),
+    idsByExternal("adsets", "workspace_id", account.workspace_id, ads.map((ad) => ad.adset_id)),
+  ]);
   const creatives = [...new Map(ads.flatMap((ad) => (ad.creative?.id ? [[ad.creative.id, ad.creative] as const] : []))).values()];
   const adNameByCreative = new Map(ads.flatMap((ad) => (ad.creative?.id ? [[ad.creative.id, ad.name ?? ""] as const] : [])));
   const creativeIds = await upsertMap(
     "creatives",
     creatives.map((c) => ({
-      ...base,
+      ...base(account),
       account_id: account.id,
       external_id: c.id,
       name: adNameByCreative.get(c.id) || c.name || c.id,
@@ -144,7 +153,7 @@ export async function syncStructure(account: Account, token: string): Promise<nu
     if (!campaignId || !adsetId) return [];
     return [
       {
-        ...base,
+        ...base(account),
         account_id: account.id,
         campaign_id: campaignId,
         adset_id: adsetId,
@@ -158,25 +167,50 @@ export async function syncStructure(account: Account, token: string): Promise<nu
     ];
   });
   await upsertMap("ads", adRows, "account_id,external_id");
-  await admin.from("ad_accounts").update({ last_synced_at: now(), status: "active" }).eq("id", account.id);
-  return campaigns.length + adsets.length + adRows.length + creatives.length;
+  return adRows.length + creatives.length;
 }
 
-/** Статистика «объявление × день» за период. */
-export async function syncInsights(account: Account, token: string, since: string, until: string): Promise<number> {
-  const insights = await graphList<GraphInsight>(
+/** Непонятное место остановки (например, от старой версии) — начинаем обход с начала. */
+function parseCursor(cursor: string | null): { part: Part; after: string } {
+  const index = cursor?.indexOf(CURSOR_SEPARATOR) ?? -1;
+  const part = PARTS.find((name) => name === cursor?.slice(0, index));
+  return part && cursor ? { part, after: cursor.slice(index + 1) } : { part: PARTS[0], after: "" };
+}
+
+/** Одна страница структуры кабинета: кампании, затем группы, затем объявления с креативами. */
+export async function syncStructure(account: Account, token: string, cursor: string | null): Promise<Progress> {
+  const { part, after } = parseCursor(cursor);
+  const path = `/${account.external_id}/${part}`;
+  let rows: number;
+  let next: string | null;
+  if (part === "campaigns") {
+    const page = await graphPage<GraphCampaign>(path, QUERY[part], token, after);
+    [rows, next] = [await saveCampaigns(account, page.data), page.after];
+  } else if (part === "adsets") {
+    const page = await graphPage<GraphAdSet>(path, QUERY[part], token, after);
+    [rows, next] = [await saveAdSets(account, page.data), page.after];
+  } else {
+    const page = await graphPage<GraphAd>(path, QUERY[part], token, after);
+    [rows, next] = [await saveAds(account, page.data), page.after];
+  }
+  if (next) return { rows, cursor: `${part}${CURSOR_SEPARATOR}${next}` };
+  const following = PARTS[PARTS.indexOf(part) + 1];
+  return { rows, cursor: following ? `${following}${CURSOR_SEPARATOR}` : null };
+}
+
+const INSIGHT_FIELDS =
+  "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,spend,impressions,reach,clicks,inline_link_clicks,actions,action_values,video_play_actions,video_thruplay_watched_actions,video_avg_time_watched_actions";
+
+/** Одна страница статистики «объявление × день» за период. */
+export async function syncInsights(account: Account, token: string, since: string, until: string, cursor: string | null): Promise<Progress> {
+  const page = await graphPage<GraphInsight>(
     `/${account.external_id}/insights`,
-    {
-      level: "ad",
-      time_increment: "1",
-      time_range: JSON.stringify({ since, until }),
-      fields:
-        "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,spend,impressions,reach,clicks,inline_link_clicks,actions,action_values,video_play_actions,video_thruplay_watched_actions,video_avg_time_watched_actions",
-      limit: "500",
-    },
+    { level: "ad", time_increment: "1", time_range: JSON.stringify({ since, until }), fields: INSIGHT_FIELDS, limit: "500" },
     token,
+    cursor,
   );
-  if (!insights.length) return 0;
+  const insights = page.data;
+  if (!insights.length) return { rows: 0, cursor: page.after };
 
   const adIds = await resolveReportedAds(
     account,
@@ -218,7 +252,7 @@ export async function syncInsights(account: Account, token: string, since: strin
       },
     ];
   });
-  return saveInsights(account, rows);
+  return { rows: await saveInsights(account, rows), cursor: page.after };
 }
 
 /** Скачивает превью очередной порции креативов. Возвращает, сколько креативов осталось. */

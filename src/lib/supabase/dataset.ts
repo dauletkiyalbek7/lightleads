@@ -220,8 +220,15 @@ export async function loadWorkspaceData(workspaceId: string, today: string): Pro
     status: a.status,
   }));
 
+  // В большом кабинете тысячи старых объявлений без показов. На экраны идут только работающие
+  // и те, по которым за период есть статистика или лиды; так же отбираются их группы и кампании.
+  const inUse = new Set([...insightRows.map((row) => row.ad_id), ...leadRows.flatMap((lead) => [lead.ad_id, lead.adset_id, lead.campaign_id])]);
+  const shownAds = adRows.filter((a) => accountIds.has(a.account_id) && (a.status === "active" || inUse.has(a.id)));
+  for (const ad of shownAds) inUse.add(ad.adset_id).add(ad.campaign_id);
+  const shown = (row: { id: string; status: string }) => row.status === "active" || inUse.has(row.id);
+
   const campaigns: Campaign[] = campaignRows
-    .filter((c) => accountIds.has(c.account_id))
+    .filter((c) => accountIds.has(c.account_id) && shown(c))
     .map((c) => ({
       id: c.id,
       accountId: c.account_id,
@@ -232,7 +239,7 @@ export async function loadWorkspaceData(workspaceId: string, today: string): Pro
       dailyBudget: Number(c.daily_budget ?? 0),
     }));
   const campaignIds = new Set(campaigns.map((c) => c.id));
-  const adsets: AdSet[] = adsetRows.filter((a) => campaignIds.has(a.campaign_id)).map((a) => ({ id: a.id, campaignId: a.campaign_id, name: a.name, status: a.status }));
+  const adsets: AdSet[] = adsetRows.filter((a) => campaignIds.has(a.campaign_id) && shown(a)).map((a) => ({ id: a.id, campaignId: a.campaign_id, name: a.name, status: a.status }));
 
   const creatives = new Map<string, Creative>(
     creativeRows.map((c) => [
@@ -251,9 +258,7 @@ export async function loadWorkspaceData(workspaceId: string, today: string): Pro
     ]),
   );
 
-  const ads: Ad[] = adRows
-    .filter((a) => accountIds.has(a.account_id))
-    .map((a) => {
+  const ads: Ad[] = shownAds.map((a) => {
       // У архивных объявлений Meta не отдаёт креатив: показываем объявление с обложкой-заглушкой
       let creativeId = a.creative_id && creatives.has(a.creative_id) ? a.creative_id : null;
       if (!creativeId) {

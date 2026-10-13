@@ -49,10 +49,21 @@ export async function graphGet<T>(pathOrUrl: string, params: Record<string, stri
   }
 }
 
+interface GraphPage<T> {
+  data?: T[];
+  paging?: { next?: string; cursors?: { after?: string } };
+}
+
+/** Одна страница списка и метка следующей страницы (null — страница последняя). */
+export async function graphPage<T>(path: string, params: Record<string, string>, token: string, after?: string | null): Promise<{ data: T[]; after: string | null }> {
+  const page = await graphGet<GraphPage<T>>(path, after ? { ...params, after } : params, token);
+  return { data: page.data ?? [], after: page.paging?.next ? (page.paging.cursors?.after ?? null) : null };
+}
+
 /** Собирает все страницы списка (paging.next). */
 export async function graphList<T>(path: string, params: Record<string, string>, token: string): Promise<T[]> {
   const rows: T[] = [];
-  let page = await graphGet<{ data?: T[]; paging?: { next?: string } }>(path, params, token);
+  let page = await graphGet<GraphPage<T>>(path, params, token);
   for (let i = 0; i < MAX_PAGES; i++) {
     rows.push(...(page.data ?? []));
     if (!page.paging?.next) break;

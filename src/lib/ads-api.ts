@@ -1,5 +1,6 @@
 import { t } from "@/i18n";
 import { addDays } from "./dates";
+import { formatInt } from "./format";
 import { SUPABASE_URL } from "./supabase/env";
 import { callFunction, type FnResult } from "./supabase/functions";
 import type { Platform } from "./types";
@@ -15,9 +16,18 @@ export const AD_PLATFORMS: Platform[] = ["meta", "tiktok"];
 export const INITIAL_SYNC_DAYS = 90;
 const INSIGHTS_WINDOW_DAYS = 10;
 /** Обычное обновление перечитывает последние дни: платформы пересчитывают статистику задним числом. */
-export const REFRESH_SYNC_DAYS = 3;
-/** Страховка от бесконечного цикла, если превью не скачиваются. */
+const REFRESH_SYNC_DAYS = 3;
+/**
+ * initial — первая загрузка: вся история и структура кабинета до конца, сколько бы вызовов это ни заняло.
+ * refresh — обновление: последние дни и одна порция структуры. В большом кабинете структура
+ * дочитывается за несколько обновлений, зато «Обновить» не длится минутами.
+ */
+export type SyncMode = "initial" | "refresh";
+const SYNC_DAYS: Record<SyncMode, number> = { initial: INITIAL_SYNC_DAYS, refresh: REFRESH_SYNC_DAYS };
+/** Страховки от бесконечного цикла: шаг читает порцию за вызов и сообщает, что осталось ещё. */
 const MAX_THUMBNAIL_STEPS = 40;
+const MAX_STRUCTURE_STEPS = 200;
+const MAX_INSIGHT_STEPS = 60;
 
 export interface AdAccountOption {
   externalId: string;
@@ -70,24 +80,29 @@ interface StepResult {
   rows?: number;
   remaining?: number;
   runId?: string | null;
+  /** Структура: обход кабинета не закончен, шаг нужно вызвать ещё раз. */
+  more?: boolean;
+  /** Статистика: с какого места продолжать окно; пусто — окно прочитано. */
+  cursor?: string | null;
 }
 
 /**
  * Синхронизация кабинетов одной платформы по шагам: курсы валют, структура, статистика окнами, превью.
- * Шаги короткие, поэтому прогресс честный: onProgress получает долю от 0 до 1.
+ * Шаги короткие, поэтому прогресс честный: onProgress получает долю от 0 до 1 и подпись
+ * (название кабинета и сколько строк уже загружено).
  */
 export async function runAdSync(
   platform: Platform,
   workspaceId: string,
   accounts: SyncAccount[],
   today: string,
-  days: number,
-  onProgress?: (progress: number, account: string) => void,
+  mode: SyncMode,
+  onProgress?: (progress: number, label: string) => void,
 ): Promise<FnResult<{ rows: number }>> {
   const step = (name: string, extra: Record<string, unknown> = {}) =>
     callFunction<StepResult>(FUNCTIONS[platform], { action: "sync_step", workspaceId, step: name, ...extra });
 
-  const since = addDays(today, -(days - 1));
+  const since = addDays(today, -(SYNC_DAYS[mode] - 1));
   const windows: { since: string; until: string }[] = [];
   for (let from = since; from <= today; from = addDays(from, INSIGHTS_WINDOW_DAYS)) {
     const until = addDays(from, INSIGHTS_WINDOW_DAYS - 1);
@@ -98,7 +113,11 @@ export async function runAdSync(
   const stepsPerAccount = windows.length + 2;
   const total = 1 + accounts.length * stepsPerAccount;
   let done = 0;
-  const tick = (account = "") => onProgress?.(++done / total, account);
+  const report = (label = "") => onProgress?.(done / total, label);
+  const tick = (label = "") => {
+    done += 1;
+    report(label);
+  };
 
   const rates = await step("rates", { since, until: today });
   if (!rates.ok) return rates;
@@ -116,20 +135,34 @@ export async function runAdSync(
       return result;
     };
 
-    const structure = await run("structure");
-    if (!structure.ok) {
-      await finish(structure.detail ?? structure.error);
-      return structure;
+    // Пока идёт долгий шаг, полоска стоит на месте, а счётчик строк показывает, что загрузка идёт
+    const label = () => (accountRows ? `${account.name} · ${t.ads.syncRows(formatInt(accountRows))}` : account.name);
+
+    const structureSteps = mode === "initial" ? MAX_STRUCTURE_STEPS : 1;
+    for (let i = 0; i < structureSteps; i++) {
+      const structure = await run("structure");
+      if (!structure.ok) {
+        await finish(structure.detail ?? structure.error);
+        return structure;
+      }
+      if (!structure.data.more) break;
+      report(label());
     }
-    tick(account.name);
+    tick(label());
 
     for (const window of windows) {
-      const insights = await run("insights", window);
-      if (!insights.ok) {
-        await finish(insights.detail ?? insights.error);
-        return insights;
+      let cursor: string | null = null;
+      for (let i = 0; i < MAX_INSIGHT_STEPS; i++) {
+        const insights: FnResult<StepResult> = await run("insights", { ...window, cursor });
+        if (!insights.ok) {
+          await finish(insights.detail ?? insights.error);
+          return insights;
+        }
+        cursor = insights.data.cursor ?? null;
+        if (!cursor) break;
+        report(label());
       }
-      tick(account.name);
+      tick(label());
     }
 
     // Превью не критичны: если платформа их не отдала, статистика всё равно загружена
@@ -137,7 +170,7 @@ export async function runAdSync(
       const thumbnails = await run("thumbnails");
       if (!thumbnails.ok || !thumbnails.data.remaining) break;
     }
-    tick(account.name);
+    tick(label());
 
     await finish();
     rows += accountRows;

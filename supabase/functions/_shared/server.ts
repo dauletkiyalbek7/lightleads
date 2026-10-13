@@ -21,7 +21,7 @@ import {
   TOKEN_EXPIRED,
   verifyState,
 } from "./core.ts";
-import { type Account, SUPPORTED_CURRENCIES, syncRates } from "./sync.ts";
+import { type Account, now, type Progress, SUPPORTED_CURRENCIES, syncRates } from "./sync.ts";
 
 const STATE_TTL_MS = 15 * 60_000;
 const SECOND_MS = 1000;
@@ -31,8 +31,15 @@ const CRON_LOOKBACK_DAYS = 3;
 /** Наибольшая глубина догрузки истории и размер одного запроса статистики, дней. */
 const MAX_LOOKBACK_DAYS = 90;
 const INSIGHTS_WINDOW_DAYS = 10;
-/** Запас до лимита времени Edge Function: дальше cron продолжит в следующий запуск. */
+/** Запас до лимита времени Edge Function (150 секунд): дальше cron продолжит в следующий запуск. */
 const CRON_BUDGET_MS = 110 * SECOND_MS;
+/** Наибольшая доля планового обновления на один кабинет и на обход его структуры: большой кабинет не задерживает остальные. */
+const CRON_ACCOUNT_BUDGET_MS = 60 * SECOND_MS;
+const CRON_STRUCTURE_BUDGET_MS = 30 * SECOND_MS;
+/** Столько один вызов шага читает страницы у платформы. Не успел — отдаёт место остановки, и браузер вызывает шаг снова. */
+const STEP_BUDGET_MS = 25 * SECOND_MS;
+/** Плановое обновление не дочитало кабинет: не ошибка, продолжение в следующий запуск. */
+const CRON_PARTIAL = "Кабинет большой: загрузка продолжится при следующем обновлении.";
 const MAX_DETAIL_LENGTH = 200;
 const DEFAULT_TIMEZONE = "Asia/Almaty";
 /** Параметры адреса, по которым виден возврат из окна входа. */
@@ -69,8 +76,10 @@ export interface Driver {
   /** Обмен параметров возврата на токен. Отказ пользователя — HttpError с пояснением в detail. */
   grant(url: URL): Promise<Grant>;
   listAccounts(token: string): Promise<RemoteAccount[]>;
-  syncStructure(account: Account, token: string): Promise<number>;
-  syncInsights(account: Account, token: string, since: string, until: string): Promise<number>;
+  /** Одна страница структуры кабинета, начиная с места cursor (null — с начала). */
+  syncStructure(account: Account, token: string, cursor: string | null): Promise<Progress>;
+  /** Одна страница статистики за период, начиная с места cursor (null — с начала). */
+  syncInsights(account: Account, token: string, since: string, until: string, cursor: string | null): Promise<Progress>;
   syncThumbnails(account: Account, token: string): Promise<{ done: number; remaining: number }>;
 }
 
@@ -84,13 +93,34 @@ type Body = Record<string, unknown>;
 
 const isoDay = (offsetDays = 0) => new Date(Date.now() - offsetDays * DAY_MS).toISOString().slice(0, 10);
 
-/** Период «последние days дней» окнами от свежих к старым. */
-function insightWindows(days: number): { since: string; until: string }[] {
+/** Период «последние days дней» окнами от свежих к старым. skip пропускает самые свежие дни. */
+function insightWindows(days: number, skip = 0): { since: string; until: string }[] {
   const windows = [];
-  for (let offset = 0; offset < days; offset += INSIGHTS_WINDOW_DAYS) {
+  for (let offset = skip; offset < days; offset += INSIGHTS_WINDOW_DAYS) {
     windows.push({ since: isoDay(Math.min(offset + INSIGHTS_WINDOW_DAYS, days) - 1), until: isoDay(offset) });
   }
   return windows;
+}
+
+/** Итог чтения страниц: error — на какой ошибке чтение оборвалось, cursor — место перед ней. */
+interface Walk extends Progress {
+  error?: unknown;
+}
+
+/** Читает страницы подряд, пока они не кончатся или не выйдет время. */
+async function walk(start: string | null, deadline: number, readPage: (cursor: string | null) => Promise<Progress>): Promise<Walk> {
+  let cursor = start;
+  let rows = 0;
+  try {
+    do {
+      const page = await readPage(cursor);
+      rows += page.rows;
+      cursor = page.cursor;
+    } while (cursor && Date.now() < deadline);
+  } catch (error) {
+    return { rows, cursor, error };
+  }
+  return { rows, cursor };
 }
 
 /** Запускает функцию подключения для платформы. */
@@ -245,15 +275,42 @@ export function serve(driver: Driver) {
     return data;
   }
 
+  /**
+   * Часть обхода структуры кабинета: продолжает с места, сохранённого прошлым вызовом, и запоминает новое.
+   * more — обход не закончен, шаг нужно вызвать ещё раз.
+   */
+  async function structurePass(account: Account, token: string, deadline: number): Promise<{ rows: number; more: boolean }> {
+    const { data } = await admin.from("ad_accounts").select("sync_cursor").eq("id", account.id).maybeSingle();
+    const saved: string | null = data?.sync_cursor ?? null;
+    const result = await walk(saved, deadline, (cursor) => driver.syncStructure(account, token, cursor));
+    // Не прошёл самый первый запрос с сохранённого места: оно устарело, следующий вызов начнёт обход с начала
+    const cursor = result.error && result.cursor === saved ? null : result.cursor;
+    const done = !result.error && cursor === null;
+    await admin
+      .from("ad_accounts")
+      .update(done ? { sync_cursor: null, last_synced_at: now(), status: "active" } : { sync_cursor: cursor })
+      .eq("id", account.id);
+    if (result.error) throw result.error;
+    return { rows: result.rows, more: !done };
+  }
+
+  /** Часть статистики за период: читает страницы, пока не выйдет время. cursor в ответе — откуда продолжать. */
+  async function insightsPass(account: Account, token: string, since: string, until: string, start: string | null, deadline: number): Promise<Progress> {
+    const result = await walk(start, deadline, (cursor) => driver.syncInsights(account, token, since, until, cursor));
+    if (result.error) throw result.error;
+    return { rows: result.rows, cursor: result.cursor };
+  }
+
   /** Один шаг синхронизации. Ошибку токена превращает в статус «нужно переподключить». */
   async function runStep(workspaceId: string, step: string, body: Body, token: string): Promise<Record<string, unknown>> {
     const since = String(body.since ?? isoDay(CRON_LOOKBACK_DAYS));
     const until = String(body.until ?? isoDay());
+    const deadline = Date.now() + STEP_BUDGET_MS;
     try {
       if (step === "rates") return { rows: await syncRates(since, until) };
       const account = await loadAccount(workspaceId, String(body.accountId ?? ""));
-      if (step === "structure") return { rows: await driver.syncStructure(account, token) };
-      if (step === "insights") return { rows: await driver.syncInsights(account, token, since, until) };
+      if (step === "structure") return await structurePass(account, token, deadline);
+      if (step === "insights") return { ...(await insightsPass(account, token, since, until, body.cursor ? String(body.cursor) : null, deadline)) };
       if (step === "thumbnails") return await driver.syncThumbnails(account, token);
       throw new HttpError(400, "unknown_step");
     } catch (error) {
@@ -289,7 +346,8 @@ export function serve(driver: Driver) {
 
   /**
    * Плановое обновление всех подключённых кабинетов платформы. Вызывает pg_cron.
-   * Необязательный параметр days (до 90) догружает историю глубже обычных трёх дней.
+   * Необязательные параметры для догрузки истории вручную: days (до 90) — глубина вместо обычных трёх дней,
+   * skip — сколько самых свежих дней пропустить, account — обновить только этот кабинет.
    */
   async function cron(req: Request, body: Body) {
     const { data: secret } = await admin.from("app_secrets").select("value").eq("name", "cron_secret").maybeSingle();
@@ -297,34 +355,49 @@ export function serve(driver: Driver) {
 
     const startedAt = Date.now();
     const days = Math.min(Math.max(Number(body.days) || CRON_LOOKBACK_DAYS + 1, 1), MAX_LOOKBACK_DAYS);
-    const windows = insightWindows(days);
+    const windows = insightWindows(days, Math.max(Number(body.skip) || 0, 0));
     await syncRates(isoDay(days - 1), isoDay());
 
-    const { data: accounts } = await admin
+    let query = admin
       .from("ad_accounts")
       .select("id, workspace_id, external_id, currency, ad_connections!inner(status)")
       .eq("platform", platform)
       .eq("selected", true)
       .eq("ad_connections.status", "active")
       .order("last_synced_at", { ascending: true, nullsFirst: true });
+    const only = body.account ? String(body.account) : null;
+    if (only) query = query.eq("id", only);
+    const { data: accounts } = await query;
 
     const tokens = new Map<string, string>();
     let synced = 0;
+    const cronDeadline = startedAt + CRON_BUDGET_MS;
     for (const account of accounts ?? []) {
-      if (Date.now() - startedAt > CRON_BUDGET_MS) break;
+      if (Date.now() > cronDeadline) break;
+      // Одному кабинету — не всё время запуска, если он не единственный
+      const deadline = only ? cronDeadline : Math.min(cronDeadline, Date.now() + CRON_ACCOUNT_BUDGET_MS);
       const { data: run } = await admin.from("sync_runs").insert({ workspace_id: account.workspace_id, account_id: account.id, status: "running" }).select("id").single();
       let rows = 0;
       let failure: string | null = null;
       try {
         if (!tokens.has(account.workspace_id)) tokens.set(account.workspace_id, (await connectionToken(account.workspace_id, platform)).token);
         const token = tokens.get(account.workspace_id)!;
-        rows += await driver.syncStructure(account, token);
+        // Структура большого кабинета дочитывается за несколько запусков; статистика при этом обновляется каждый раз
+        const structure = await structurePass(account, token, Math.min(deadline, Date.now() + CRON_STRUCTURE_BUDGET_MS));
+        rows += structure.rows;
+        let partial = structure.more;
         for (const window of windows) {
-          if (Date.now() - startedAt > CRON_BUDGET_MS) break;
-          rows += await driver.syncInsights(account, token, window.since, window.until);
+          if (Date.now() > deadline) {
+            partial = true;
+            break;
+          }
+          const insights = await insightsPass(account, token, window.since, window.until, null, deadline);
+          rows += insights.rows;
+          if (insights.cursor) partial = true;
         }
         await driver.syncThumbnails(account, token);
-        synced += 1;
+        if (partial) failure = CRON_PARTIAL;
+        else synced += 1;
       } catch (error) {
         failure = error instanceof HttpError ? (error.detail ?? error.code) : String(error);
         if (error instanceof HttpError && error.code === TOKEN_EXPIRED) await markTokenExpired(account.workspace_id, platform);
@@ -332,7 +405,7 @@ export function serve(driver: Driver) {
       if (run) {
         await admin
           .from("sync_runs")
-          .update({ status: failure ? "error" : "success", finished_at: new Date().toISOString(), rows, error: failure?.slice(0, MAX_DETAIL_LENGTH) ?? null })
+          .update({ status: failure && failure !== CRON_PARTIAL ? "error" : "success", finished_at: now(), rows, error: failure?.slice(0, MAX_DETAIL_LENGTH) ?? null })
           .eq("id", run.id);
       }
     }

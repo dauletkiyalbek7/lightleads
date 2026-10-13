@@ -1,7 +1,7 @@
 // Синхронизация TikTok Ads: структура кабинета, статистика по дням и обложки креативов.
 // Каждый шаг — отдельный короткий вызов, чтобы уложиться в лимиты Edge Functions
 // и показывать пользователю прогресс первой загрузки.
-import { admin } from "../_shared/core.ts";
+// Структуру и отчёт TikTok отдаёт быстро, поэтому они читаются целиком за один вызов (cursor всегда пуст).
 import {
   type Account,
   chunk,
@@ -9,6 +9,7 @@ import {
   now,
   num,
   pendingThumbnails,
+  type Progress,
   resolveReportedAds,
   type Row,
   saveInsights,
@@ -126,7 +127,7 @@ async function upsertCreatives(account: Account, ads: TikTokAd[]): Promise<Map<s
 }
 
 /** Кампании, группы, объявления и креативы кабинета. */
-export async function syncStructure(account: Account, token: string): Promise<number> {
+export async function syncStructure(account: Account, token: string): Promise<Progress> {
   const base = { workspace_id: account.workspace_id, updated_at: now() };
   const advertiser = { advertiser_id: account.external_id };
 
@@ -178,8 +179,7 @@ export async function syncStructure(account: Account, token: string): Promise<nu
     ];
   });
   await upsertMap("ads", adRows, "account_id,external_id");
-  await admin.from("ad_accounts").update({ last_synced_at: now(), status: "active" }).eq("id", account.id);
-  return campaigns.length + adgroups.length + adRows.length + creativeIds.size;
+  return { rows: campaigns.length + adgroups.length + adRows.length + creativeIds.size, cursor: null };
 }
 
 /**
@@ -206,7 +206,7 @@ async function creativesOfAds(account: Account, token: string, adIds: string[]):
 }
 
 /** Статистика «объявление × день» за период (не больше 30 дней на запрос). */
-export async function syncInsights(account: Account, token: string, since: string, until: string): Promise<number> {
+export async function syncInsights(account: Account, token: string, since: string, until: string): Promise<Progress> {
   const report = await tiktokList<TikTokReportRow>(
     "/report/integrated/get/",
     {
@@ -223,7 +223,7 @@ export async function syncInsights(account: Account, token: string, since: strin
   );
   // TikTok возвращает строку на каждый день каждого объявления, даже если показов не было
   const delivered = report.filter((row) => num(row.metrics.spend) > 0 || num(row.metrics.impressions) > 0);
-  if (!delivered.length) return 0;
+  if (!delivered.length) return { rows: 0, cursor: null };
 
   const known = await existingMap("ads", "account_id", account.id);
   const unknown = [...new Set(delivered.map((row) => row.dimensions.ad_id).filter((id) => !known.has(id)))];
@@ -273,7 +273,7 @@ export async function syncInsights(account: Account, token: string, since: strin
       },
     ];
   });
-  return saveInsights(account, rows);
+  return { rows: await saveInsights(account, rows), cursor: null };
 }
 
 /** Скачивает обложки очередной порции креативов. Возвращает, сколько креативов осталось. */

@@ -23,6 +23,15 @@ export interface Account {
 
 export type Row = Record<string, unknown>;
 
+/**
+ * Итог чтения одной страницы у платформы: сколько строк записано и с какого места читать дальше.
+ * cursor пуст — прочитано всё.
+ */
+export interface Progress {
+  rows: number;
+  cursor: string | null;
+}
+
 export const num = (value?: string | number | null) => Number(value ?? 0) || 0;
 export const now = () => new Date().toISOString();
 export const chunk = <T>(list: T[], size: number): T[][] => Array.from({ length: Math.ceil(list.length / size) }, (_, i) => list.slice(i * size, (i + 1) * size));
@@ -54,6 +63,20 @@ export async function existingMap(table: string, column: string, value: string):
   return map;
 }
 
+/**
+ * «Внешний ID → наш ID» только для перечисленных внешних ID. В большом кабинете тысячи объявлений:
+ * читать весь список ради одной страницы незачем.
+ */
+export async function idsByExternal(table: string, column: string, value: string, externalIds: string[]): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  for (const part of chunk([...new Set(externalIds)], IN_FILTER_CHUNK)) {
+    const { data, error } = await admin.from(table).select("id, external_id").eq(column, value).in("external_id", part);
+    if (error) throw new HttpError(500, "db_error", `${table}: ${error.message}`);
+    for (const row of data ?? []) map.set(row.external_id, row.id);
+  }
+  return map;
+}
+
 // ---------- Статистика ----------
 
 /** Строка отчёта платформы: объявление с названиями его группы и кампании. */
@@ -79,8 +102,8 @@ export async function resolveReportedAds(
   creativeByAd: Map<string, string> = new Map(),
 ): Promise<Map<string, string>> {
   const base = { workspace_id: account.workspace_id, updated_at: now() };
-  const campaignIds = await existingMap("campaigns", "account_id", account.id);
-  const adIds = await existingMap("ads", "account_id", account.id);
+  const campaignIds = await idsByExternal("campaigns", "account_id", account.id, reported.map((row) => row.campaignId));
+  const adIds = await idsByExternal("ads", "account_id", account.id, reported.map((row) => row.adId));
 
   const missingCampaigns = new Map<string, Row>();
   for (const row of reported) {
@@ -101,11 +124,7 @@ export async function resolveReportedAds(
   for (const part of chunk([...adsetRows.values()], UPSERT_CHUNK)) {
     await admin.from("adsets").upsert(part, { onConflict: "campaign_id,external_id", ignoreDuplicates: true });
   }
-  const adsetIds = new Map<string, string>();
-  for (const part of chunk([...adsetRows.keys()], IN_FILTER_CHUNK)) {
-    const { data: adsets } = await admin.from("adsets").select("id, external_id").eq("workspace_id", account.workspace_id).in("external_id", part);
-    for (const row of adsets ?? []) adsetIds.set(row.external_id, row.id);
-  }
+  const adsetIds = await idsByExternal("adsets", "workspace_id", account.workspace_id, [...adsetRows.keys()]);
 
   const adRows = new Map<string, Row>();
   for (const row of missingAds) {
@@ -147,16 +166,18 @@ export interface PendingCreative {
   type: string;
 }
 
-/** Очередная порция креативов без превью и сколько их останется после неё. */
+/**
+ * Очередная порция креативов без превью и сколько их останется после неё.
+ * В очередь попадают только креативы работающих объявлений и объявлений со статистикой.
+ */
 export async function pendingThumbnails(account: Account): Promise<{ pending: PendingCreative[]; remaining: number }> {
-  const { data, count } = await admin
-    .from("creatives")
-    .select("id, external_id, type", { count: "exact" })
-    .eq("account_id", account.id)
-    .is("thumbnail_path", null)
-    .limit(THUMBNAILS_PER_STEP);
-  const pending = data ?? [];
-  return { pending, remaining: Math.max((count ?? pending.length) - pending.length, 0) };
+  const { data, error } = await admin.rpc("pending_thumbnails", { p_account: account.id, p_limit: THUMBNAILS_PER_STEP });
+  if (error) throw new HttpError(500, "db_error", `pending_thumbnails: ${error.message}`);
+  const rows = (data ?? []) as (PendingCreative & { total: number })[];
+  return {
+    pending: rows.map(({ id, external_id, type }) => ({ id, external_id, type })),
+    remaining: Math.max(Number(rows[0]?.total ?? 0) - rows.length, 0),
+  };
 }
 
 /**

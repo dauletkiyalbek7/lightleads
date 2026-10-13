@@ -7,7 +7,7 @@ import { aggregate, type Aggregate } from "./analytics";
 import { attributeAll, type Attribution } from "./attribution";
 import { toDual } from "./currency";
 import { addDays, previousPeriod, resolvePeriod, todayISO, type PeriodPreset } from "./dates";
-import { AD_PLATFORMS, adErrorText, REFRESH_SYNC_DAYS, runAdSync } from "./ads-api";
+import { AD_PLATFORMS, adErrorText, runAdSync } from "./ads-api";
 import { DEFAULT_MARGIN_PCT, DEMO_SALES_CURRENCY, generateDataset } from "./mock/seed";
 import { leadsAdd, leadsDelete, type ManualLeadInput } from "./leads-api";
 import { detectSignals, suggestTargets, type Signal } from "./rules";
@@ -467,7 +467,7 @@ export function AppProvider({ children, session = null }: { children: ReactNode;
       for (const platform of AD_PLATFORMS) {
         const accounts = realAccounts.filter((a) => a.platform === platform).map((a) => ({ id: a.id, name: a.name }));
         if (!accounts.length) continue;
-        const result = await runAdSync(platform, workspace.id, accounts, today, REFRESH_SYNC_DAYS);
+        const result = await runAdSync(platform, workspace.id, accounts, today, "refresh");
         if (!result.ok) toast.error(adErrorText(platform, result));
       }
       await loadReal(workspace.id, today);

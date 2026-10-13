@@ -128,7 +128,7 @@ export function AdPlatformConnection({ platform }: { platform: Platform }) {
       return;
     }
     setProgress({ value: 0, account: "" });
-    const result = await runAdSync(platform, workspace.id, selected.data.accounts, today, INITIAL_SYNC_DAYS, (value, account) => setProgress({ value, account }));
+    const result = await runAdSync(platform, workspace.id, selected.data.accounts, today, "initial", (value, account) => setProgress({ value, account }));
     await reloadData();
     setProgress(null);
     setPending(false);
