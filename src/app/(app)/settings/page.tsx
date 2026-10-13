@@ -7,7 +7,7 @@ import { useTheme } from "@/hooks/use-theme";
 import { toast } from "sonner";
 import { z } from "zod";
 import { CredentialsDialog } from "@/components/features/credentials-dialog";
-import { MetaConnection } from "@/components/features/meta-connect";
+import { AdPlatformConnection } from "@/components/features/ad-connect";
 import { WorkspaceAvatar } from "@/components/shell/workspace-switcher";
 import { PlatformIcon } from "@/components/kit/brand";
 import { Btn } from "@/components/kit/btn";
@@ -18,6 +18,7 @@ import { Segmented } from "@/components/kit/segmented";
 import { EmptyState, PageSkeleton } from "@/components/kit/states";
 import { IconPill, Section, Surface } from "@/components/kit/surface";
 import { t } from "@/i18n";
+import { AD_PLATFORMS } from "@/lib/ads-api";
 import { APP, ATTRIBUTION_WINDOWS } from "@/lib/config";
 import { celebrate } from "@/lib/confetti";
 import { rateOn } from "@/lib/currency";
@@ -54,7 +55,7 @@ function Chip({ active, onClick, children }: { active: boolean; onClick: () => v
 }
 
 function Connections() {
-  const { ds, syncNow, syncing, demoMode } = useApp();
+  const { ds, syncNow, syncing, demoMode, canManage } = useApp();
   const demo = () => toast(t.settings.connections.demoConnect);
   const s = t.settings.connections;
   return (
@@ -87,7 +88,7 @@ function Connections() {
                     <RefreshCw className={cn(syncing && "animate-spin")} />
                     {s.refresh}
                   </Btn>
-                  {/* У настоящего подключения вход и отключение общие для всех кабинетов: они в блоке Meta ниже */}
+                  {/* У настоящего подключения вход и отключение общие для всех кабинетов платформы: они в блоках ниже */}
                   {demoMode && (
                     <>
                       <Btn variant="ghost" size="sm" onClick={demo}>
@@ -117,13 +118,12 @@ function Connections() {
             </Btn>
           </div>
         ) : (
-          <div className="mt-4 space-y-3">
-            <MetaConnection />
-            <Btn variant="secondary" disabled>
-              <PlatformIcon platform="tiktok" size="sm" />
-              {s.connectTikTok}
-              <Pill tone="muted">{t.common.soon}</Pill>
-            </Btn>
+          <div className="mt-4 flex flex-wrap gap-3">
+            {canManage ? (
+              AD_PLATFORMS.map((platform) => <AdPlatformConnection key={platform} platform={platform} />)
+            ) : (
+              <p className="text-sm text-muted-foreground">{t.ads.ownerOnly}</p>
+            )}
           </div>
         )}
       </Section>

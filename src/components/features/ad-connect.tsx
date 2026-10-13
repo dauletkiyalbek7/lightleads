@@ -11,41 +11,45 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { t } from "@/i18n";
 import { celebrate } from "@/lib/confetti";
 import {
+  adErrorText,
+  adsAccounts,
+  adsConfigured,
+  adsDisconnect,
+  adsSelectAccounts,
+  adsStart,
   INITIAL_SYNC_DAYS,
-  metaAccounts,
-  metaDisconnect,
-  metaSelectAccounts,
-  metaStart,
-  runMetaSync,
-  type MetaAccountOption,
-} from "@/lib/meta-api";
+  runAdSync,
+  type AdAccountOption,
+} from "@/lib/ads-api";
 import { useApp } from "@/lib/store";
 import { getBrowserSupabase } from "@/lib/supabase/client";
 import type { FnResult } from "@/lib/supabase/functions";
-import type { AdConnection } from "@/lib/types";
+import type { AdConnection, Platform } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const PERCENT = 100;
-/** Параметры, с которыми Facebook возвращает браузер на страницу настроек. */
-const RESULT_PARAM = "meta";
+/** Вместе с параметром-названием платформы (?meta=…, ?tiktok=…) приходит пояснение ошибки. */
 const DETAIL_PARAM = "detail";
-/** Ошибки Meta держим на экране долго: их нужно успеть прочитать и переслать. */
+/** Ошибки платформ держим на экране долго: их нужно успеть прочитать и переслать. */
 const ERROR_TOAST = { duration: 60_000, closeButton: true };
 
 type Connection = Pick<AdConnection, "status" | "userName">;
-const errorText = (result: Extract<FnResult<unknown>, { ok: false }>) => result.detail ?? t.meta.errors[result.error] ?? t.common.genericError;
+type Failure = Extract<FnResult<unknown>, { ok: false }>;
 
 /**
- * Подключение Meta: вход через Facebook, выбор кабинетов и первая загрузка с прогрессом.
- * Платформа только читает рекламу; токен хранится на сервере зашифрованным.
+ * Подключение рекламной платформы: вход на её стороне, выбор кабинетов и первая загрузка с прогрессом.
+ * LightLeads только читает рекламу; токен хранится на сервере зашифрованным.
  */
-export function MetaConnection() {
-  const s = t.meta;
+export function AdPlatformConnection({ platform }: { platform: Platform }) {
+  const s = { ...t.ads, ...t.ads[platform] };
   const { workspace, canManage, today, reloadData } = useApp();
+  const errorText = (result: Failure) => adErrorText(platform, result);
   const [connection, setConnection] = useState<Connection | null>();
+  /** undefined — ещё проверяем; false — на сервере нет ключей приложения платформы. */
+  const [configured, setConfigured] = useState<boolean>();
   const [pending, setPending] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [options, setOptions] = useState<MetaAccountOption[] | null>(null);
+  const [options, setOptions] = useState<AdAccountOption[] | null>(null);
   const [chosen, setChosen] = useState<Set<string>>(new Set());
   const [progress, setProgress] = useState<{ value: number; account: string } | null>(null);
 
@@ -54,33 +58,37 @@ export function MetaConnection() {
       .from("ad_connections")
       .select("status, external_user_name")
       .eq("workspace_id", workspace.id)
-      .eq("platform", "meta")
+      .eq("platform", platform)
       .maybeSingle();
     setConnection(data && data.status !== "disconnected" ? { status: data.status, userName: data.external_user_name ?? "" } : null);
-  }, [workspace.id]);
+  }, [workspace.id, platform]);
 
   const openPicker = useCallback(async () => {
     setPickerOpen(true);
     setOptions(null);
-    const result = await metaAccounts(workspace.id);
+    const result = await adsAccounts(platform, workspace.id);
     if (!result.ok) {
-      toast.error(errorText(result), ERROR_TOAST);
+      toast.error(adErrorText(platform, result), ERROR_TOAST);
       setPickerOpen(false);
       await loadConnection();
       return;
     }
     setOptions(result.data.accounts);
     setChosen(new Set(result.data.accounts.filter((a) => a.selected && a.supported).map((a) => a.externalId)));
-  }, [workspace.id, loadConnection]);
+  }, [workspace.id, platform, loadConnection]);
 
   useEffect(() => {
     void loadConnection();
   }, [loadConnection]);
 
-  // Возврат из окна Facebook: ?meta=connected или ?meta=error&detail=…
+  useEffect(() => {
+    void adsConfigured(platform).then(setConfigured);
+  }, [platform]);
+
+  // Возврат из окна входа платформы: ?meta=connected или ?tiktok=error&detail=…
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const result = params.get(RESULT_PARAM);
+    const result = params.get(platform);
     if (!result) return;
     window.history.replaceState(null, "", window.location.pathname);
     if (result === "connected") {
@@ -94,7 +102,7 @@ export function MetaConnection() {
 
   const connect = async () => {
     setPending(true);
-    const result = await metaStart(workspace.id);
+    const result = await adsStart(platform, workspace.id);
     if (result.ok) window.location.assign(result.data.url);
     else {
       toast.error(errorText(result), ERROR_TOAST);
@@ -104,7 +112,7 @@ export function MetaConnection() {
 
   const disconnect = async () => {
     setPending(true);
-    const result = await metaDisconnect(workspace.id);
+    const result = await adsDisconnect(platform, workspace.id);
     setPending(false);
     if (!result.ok) return void toast.error(errorText(result));
     toast.success(s.disconnected);
@@ -113,14 +121,14 @@ export function MetaConnection() {
 
   const confirm = async () => {
     setPending(true);
-    const selected = await metaSelectAccounts(workspace.id, [...chosen]);
+    const selected = await adsSelectAccounts(platform, workspace.id, [...chosen]);
     if (!selected.ok) {
       toast.error(errorText(selected), ERROR_TOAST);
       setPending(false);
       return;
     }
     setProgress({ value: 0, account: "" });
-    const result = await runMetaSync(workspace.id, selected.data.accounts, today, INITIAL_SYNC_DAYS, (value, account) => setProgress({ value, account }));
+    const result = await runAdSync(platform, workspace.id, selected.data.accounts, today, INITIAL_SYNC_DAYS, (value, account) => setProgress({ value, account }));
     await reloadData();
     setProgress(null);
     setPending(false);
@@ -141,15 +149,25 @@ export function MetaConnection() {
       return next;
     });
 
-  if (connection === undefined) return null;
-  if (!canManage) return <p className="text-sm text-muted-foreground">{s.ownerOnly}</p>;
+  // Подключением управляет владелец workspace: остальным о нём говорит подпись на странице настроек
+  if (!canManage || connection === undefined || configured === undefined) return null;
+  // Пока на сервере нет ключей приложения платформы, подключение показываем как «Скоро»
+  if (!connection && !configured) {
+    return (
+      <Btn variant="secondary" disabled>
+        <PlatformIcon platform={platform} size="sm" />
+        {s.connect}
+        <Pill tone="muted">{t.common.soon}</Pill>
+      </Btn>
+    );
+  }
 
   const expired = connection?.status === "token_expired";
   return (
     <>
       {connection ? (
-        <div className={cn("flex flex-col gap-3 rounded-[20px] border p-4 sm:flex-row sm:items-center", expired ? "border-warning/40 bg-warning/5" : "border-border")}>
-          <PlatformIcon platform="meta" size="lg" />
+        <div className={cn("flex w-full flex-col gap-3 rounded-[20px] border p-4 sm:flex-row sm:items-center", expired ? "border-warning/40 bg-warning/5" : "border-border")}>
+          <PlatformIcon platform={platform} size="lg" />
           <div className="min-w-0 flex-1">
             <p className="truncate font-semibold">{s.connectedAs(connection.userName)}</p>
             <p className="text-sm text-muted-foreground">{expired ? s.expired : s.connectedHint}</p>
@@ -172,7 +190,7 @@ export function MetaConnection() {
         </div>
       ) : (
         <Btn variant="secondary" onClick={connect} disabled={pending}>
-          <PlatformIcon platform="meta" size="sm" />
+          <PlatformIcon platform={platform} size="sm" />
           {s.connect}
         </Btn>
       )}

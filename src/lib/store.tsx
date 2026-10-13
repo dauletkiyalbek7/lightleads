@@ -7,7 +7,7 @@ import { aggregate, type Aggregate } from "./analytics";
 import { attributeAll, type Attribution } from "./attribution";
 import { toDual } from "./currency";
 import { addDays, previousPeriod, resolvePeriod, todayISO, type PeriodPreset } from "./dates";
-import { REFRESH_SYNC_DAYS, runMetaSync } from "./meta-api";
+import { AD_PLATFORMS, adErrorText, REFRESH_SYNC_DAYS, runAdSync } from "./ads-api";
 import { DEFAULT_MARGIN_PCT, DEMO_SALES_CURRENCY, generateDataset } from "./mock/seed";
 import { detectSignals, suggestTargets, type Signal } from "./rules";
 import { scoreCreatives, type CreativeStat } from "./score";
@@ -391,12 +391,17 @@ export function AppProvider({ children, session = null }: { children: ReactNode;
       }, SYNC_DEMO_MS);
       return;
     }
-    const metaAccounts = realAccounts.filter((a) => a.platform === "meta").map((a) => ({ id: a.id, name: a.name }));
-    void runMetaSync(workspace.id, metaAccounts, today, REFRESH_SYNC_DAYS).then(async (result) => {
-      if (!result.ok) toast.error(result.detail ?? t.meta.errors[result.error] ?? t.common.genericError);
+    // Платформы обновляем по очереди; ошибка одной не мешает обновить другую
+    void (async () => {
+      for (const platform of AD_PLATFORMS) {
+        const accounts = realAccounts.filter((a) => a.platform === platform).map((a) => ({ id: a.id, name: a.name }));
+        if (!accounts.length) continue;
+        const result = await runAdSync(platform, workspace.id, accounts, today, REFRESH_SYNC_DAYS);
+        if (!result.ok) toast.error(adErrorText(platform, result));
+      }
       await loadReal(workspace.id, today);
       setSyncing(false);
-    });
+    })();
   }, [realAccounts, workspace.id, today, loadReal]);
 
   const value: AppState = {

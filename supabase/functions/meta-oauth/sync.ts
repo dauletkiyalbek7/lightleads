@@ -1,25 +1,13 @@
-// Синхронизация Meta: структура кабинета, статистика по дням, превью креативов и курсы НБРК.
+// Синхронизация Meta: структура кабинета, статистика по дням и превью креативов.
 // Каждый шаг — отдельный короткий вызов, чтобы уложиться в лимиты Edge Functions
 // и показывать пользователю прогресс первой загрузки.
-import { admin, graphGet, graphList, HttpError } from "./lib.ts";
+import { admin } from "../_shared/core.ts";
+import { type Account, now, num, pendingThumbnails, resolveReportedAds, saveInsights, storeThumbnail, upsertMap } from "../_shared/sync.ts";
+import { graphGet, graphList } from "./lib.ts";
 
-export const SUPPORTED_CURRENCIES = ["USD", "KZT"];
-const UPSERT_CHUNK = 500;
-const THUMBNAILS_PER_STEP = 20;
 const THUMBNAIL_SIZE = { thumbnail_width: "600", thumbnail_height: "750" };
 /** Meta отдаёт бюджеты в минимальных единицах валюты (центы, тиыны). */
 const BUDGET_DIVISOR = 100;
-const RATES_CONCURRENCY = 8;
-const STORAGE_BUCKET = "creatives";
-/** Пустая строка в thumbnail_path: превью у креатива нет, повторно не ищем. */
-const NO_THUMBNAIL = "";
-
-export interface Account {
-  id: string;
-  workspace_id: string;
-  external_id: string;
-  currency: string;
-}
 
 interface Named {
   id: string;
@@ -75,8 +63,6 @@ interface GraphInsight {
 }
 
 const status = (effective?: string) => (effective === "ACTIVE" ? "active" : "paused");
-const num = (value?: string) => Number(value ?? 0) || 0;
-const chunk = <T>(list: T[], size: number): T[][] => Array.from({ length: Math.ceil(list.length / size) }, (_, i) => list.slice(i * size, (i + 1) * size));
 
 /** Цель кампании Meta → цель в LightLeads. */
 function objective(value?: string): string | null {
@@ -97,27 +83,6 @@ function action(list: ActionStat[] | undefined, types: string[]): number {
   }
   return 0;
 }
-
-type Row = Record<string, unknown>;
-
-/** upsert с возвратом соответствия «внешний ID → наш ID». */
-async function upsertMap(table: string, rows: Row[], onConflict: string): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
-  for (const part of chunk(rows, UPSERT_CHUNK)) {
-    const { data, error } = await admin.from(table).upsert(part, { onConflict }).select("id, external_id");
-    if (error) throw new HttpError(500, "db_error", `${table}: ${error.message}`);
-    for (const row of data ?? []) map.set(row.external_id, row.id);
-  }
-  return map;
-}
-
-async function existingMap(table: string, column: string, value: string): Promise<Map<string, string>> {
-  const { data, error } = await admin.from(table).select("id, external_id").eq(column, value);
-  if (error) throw new HttpError(500, "db_error", `${table}: ${error.message}`);
-  return new Map((data ?? []).map((row) => [row.external_id, row.id]));
-}
-
-const now = () => new Date().toISOString();
 
 /** Кампании, группы, объявления и креативы кабинета. */
 export async function syncStructure(account: Account, token: string): Promise<number> {
@@ -197,10 +162,7 @@ export async function syncStructure(account: Account, token: string): Promise<nu
   return campaigns.length + adsets.length + adRows.length + creatives.length;
 }
 
-/**
- * Статистика «объявление × день» за период. Архивные объявления в списках структуры
- * не приходят, но расход по ним есть: для них создаём записи по названиям из отчёта.
- */
+/** Статистика «объявление × день» за период. */
 export async function syncInsights(account: Account, token: string, since: string, until: string): Promise<number> {
   const insights = await graphList<GraphInsight>(
     `/${account.external_id}/insights`,
@@ -216,45 +178,19 @@ export async function syncInsights(account: Account, token: string, since: strin
   );
   if (!insights.length) return 0;
 
-  const base = { workspace_id: account.workspace_id, updated_at: now() };
-  const campaignIds = await existingMap("campaigns", "account_id", account.id);
-  const adIds = await existingMap("ads", "account_id", account.id);
-
-  const missingCampaigns = new Map<string, Row>();
-  for (const row of insights) {
-    if (campaignIds.has(row.campaign_id) || missingCampaigns.has(row.campaign_id)) continue;
-    missingCampaigns.set(row.campaign_id, { ...base, account_id: account.id, platform: "meta", external_id: row.campaign_id, name: row.campaign_name ?? row.campaign_id, status: "paused" });
-  }
-  for (const [externalId, id] of await upsertMap("campaigns", [...missingCampaigns.values()], "account_id,external_id")) campaignIds.set(externalId, id);
-
-  const missingAds = insights.filter((row) => !adIds.has(row.ad_id));
-  if (missingAds.length) {
-    const adsetIds = new Map<string, string>();
-    const adsetRows = new Map<string, Row>();
-    for (const row of missingAds) {
-      const campaignId = campaignIds.get(row.campaign_id);
-      if (campaignId) adsetRows.set(row.adset_id, { ...base, campaign_id: campaignId, external_id: row.adset_id, name: row.adset_name ?? row.adset_id });
-    }
-    // Статус существующих групп не трогаем: ignoreDuplicates оставляет строку как есть
-    for (const part of chunk([...adsetRows.values()], UPSERT_CHUNK)) {
-      await admin.from("adsets").upsert(part.map((r) => ({ ...r, status: "paused" })), { onConflict: "campaign_id,external_id", ignoreDuplicates: true });
-    }
-    const { data: adsets } = await admin
-      .from("adsets")
-      .select("id, external_id")
-      .eq("workspace_id", account.workspace_id)
-      .in("external_id", [...adsetRows.keys()]);
-    for (const row of adsets ?? []) adsetIds.set(row.external_id, row.id);
-
-    const adRows = new Map<string, Row>();
-    for (const row of missingAds) {
-      const campaignId = campaignIds.get(row.campaign_id);
-      const adsetId = adsetIds.get(row.adset_id);
-      if (!campaignId || !adsetId) continue;
-      adRows.set(row.ad_id, { ...base, account_id: account.id, campaign_id: campaignId, adset_id: adsetId, platform: "meta", external_id: row.ad_id, name: row.ad_name ?? row.ad_id, status: "paused", start_date: row.date_start });
-    }
-    for (const [externalId, id] of await upsertMap("ads", [...adRows.values()], "account_id,external_id")) adIds.set(externalId, id);
-  }
+  const adIds = await resolveReportedAds(
+    account,
+    "meta",
+    insights.map((row) => ({
+      adId: row.ad_id,
+      adName: row.ad_name,
+      adsetId: row.adset_id,
+      adsetName: row.adset_name,
+      campaignId: row.campaign_id,
+      campaignName: row.campaign_name,
+      date: row.date_start,
+    })),
+  );
 
   const rows = insights.flatMap((row) => {
     const adId = adIds.get(row.ad_id);
@@ -282,72 +218,18 @@ export async function syncInsights(account: Account, token: string, since: strin
       },
     ];
   });
-  for (const part of chunk(rows, UPSERT_CHUNK)) {
-    const { error } = await admin.from("insights_daily").upsert(part, { onConflict: "ad_id,date" });
-    if (error) throw new HttpError(500, "db_error", `insights_daily: ${error.message}`);
-  }
-  await admin.from("ad_accounts").update({ last_synced_at: now() }).eq("id", account.id);
-  return rows.length;
+  return saveInsights(account, rows);
 }
 
-/** Скачивает превью в Storage: ссылки Meta живут недолго. Возвращает, сколько креативов осталось. */
+/** Скачивает превью очередной порции креативов. Возвращает, сколько креативов осталось. */
 export async function syncThumbnails(account: Account, token: string): Promise<{ done: number; remaining: number }> {
-  const { data: pending, count } = await admin
-    .from("creatives")
-    .select("id, external_id", { count: "exact" })
-    .eq("account_id", account.id)
-    .is("thumbnail_path", null)
-    .limit(THUMBNAILS_PER_STEP);
-  if (!pending?.length) return { done: 0, remaining: 0 };
-
+  const { pending, remaining } = await pendingThumbnails(account);
   await Promise.all(
     pending.map(async (creative) => {
       // Свежую ссылку на превью спрашиваем у каждого креатива отдельно; сбой одного не мешает остальным
       const source = await graphGet<GraphCreative>(`/${creative.external_id}`, { fields: "thumbnail_url,image_url", ...THUMBNAIL_SIZE }, token).catch(() => null);
-      const url = source?.thumbnail_url ?? source?.image_url;
-      let path = NO_THUMBNAIL;
-      if (url) {
-        const image = await fetch(url).catch(() => null);
-        if (image?.ok) {
-          const target = `${account.workspace_id}/${creative.id}.jpg`;
-          const { error } = await admin.storage.from(STORAGE_BUCKET).upload(target, await image.arrayBuffer(), {
-            contentType: image.headers.get("content-type") ?? "image/jpeg",
-            upsert: true,
-          });
-          if (!error) path = target;
-        }
-      }
-      await admin.from("creatives").update({ thumbnail_path: path }).eq("id", creative.id);
+      await storeThumbnail(account, creative.id, source?.thumbnail_url ?? source?.image_url);
     }),
   );
-  return { done: pending.length, remaining: Math.max((count ?? pending.length) - pending.length, 0) };
-}
-
-const NBRK_URL = "https://nationalbank.kz/rss/get_rates.cfm";
-const USD_RATE_RE = /<title>USD<\/title>[\s\S]*?<description>([\d.]+)<\/description>/;
-
-/** Курс НБРК (тенге за 1 USD) на недостающие даты периода. */
-export async function syncRates(since: string, until: string): Promise<number> {
-  const dates: string[] = [];
-  for (let d = new Date(`${since}T00:00:00Z`); d <= new Date(`${until}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1)) dates.push(d.toISOString().slice(0, 10));
-  const { data: known } = await admin.from("exchange_rates").select("date").gte("date", since).lte("date", until);
-  const have = new Set((known ?? []).map((row) => row.date));
-  const missing = dates.filter((date) => !have.has(date));
-
-  const rows: Row[] = [];
-  for (const part of chunk(missing, RATES_CONCURRENCY)) {
-    await Promise.all(
-      part.map(async (date) => {
-        const [year, month, day] = date.split("-");
-        const response = await fetch(`${NBRK_URL}?fdate=${day}.${month}.${year}`).catch(() => null);
-        const rate = Number((await response?.text())?.match(USD_RATE_RE)?.[1]);
-        if (rate > 0) rows.push({ date, usd_kzt: rate });
-      }),
-    );
-  }
-  if (rows.length) {
-    const { error } = await admin.from("exchange_rates").upsert(rows, { onConflict: "date" });
-    if (error) throw new HttpError(500, "db_error", `exchange_rates: ${error.message}`);
-  }
-  return rows.length;
+  return { done: pending.length, remaining };
 }
