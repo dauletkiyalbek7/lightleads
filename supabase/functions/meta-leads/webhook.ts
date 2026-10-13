@@ -1,0 +1,135 @@
+// Уведомления Meta: проверка подписи и разбор. Без обращений к сети и базе.
+//   object = "page", field = "leadgen"                        — новая заявка из лид-формы страницы
+//   object = "whatsapp_business_account", field = "messages"  — входящее сообщение WhatsApp
+
+const encoder = new TextEncoder();
+const SIGNATURE_PREFIX = "sha256=";
+const VERIFY_TOKEN_LENGTH = 32;
+const SECOND_MS = 1000;
+/** Тип источника в сообщении WhatsApp: клиент написал, нажав на объявление. */
+const AD_SOURCE = "ad";
+/** Что из описания объявления сохраняем вместе с лидом. */
+const REFERRAL_KEYS = ["source_id", "source_url", "headline", "ctwa_clid"];
+
+type Json = Record<string, unknown>;
+const obj = (value: unknown): Json => (value && typeof value === "object" && !Array.isArray(value) ? (value as Json) : {});
+const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
+const text = (value: unknown): string => (typeof value === "string" || typeof value === "number" ? String(value).trim() : "");
+
+async function hmacHex(secret: string, message: string): Promise<string> {
+  const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(message));
+  return Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/** Подпись уведомления: Meta подписывает тело запроса секретом приложения (заголовок X-Hub-Signature-256). */
+export async function verifySignature(appSecret: string, body: string, header: string | null): Promise<boolean> {
+  if (!appSecret || !header?.startsWith(SIGNATURE_PREFIX)) return false;
+  const expected = await hmacHex(appSecret, body);
+  const given = header.slice(SIGNATURE_PREFIX.length).toLowerCase();
+  if (given.length !== expected.length) return false;
+  // Сравнение без раннего выхода: время ответа не подсказывает, сколько символов совпало
+  let diff = 0;
+  for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ given.charCodeAt(i);
+  return diff === 0;
+}
+
+/**
+ * Проверочная строка, которую владелец платформы вписывает в настройки вебхука приложения Meta.
+ * Выводится из секрета приложения, поэтому нигде не хранится и сам секрет не раскрывает.
+ */
+export const verifyToken = async (appSecret: string) => (await hmacHex(appSecret, "lightleads-webhook-verify")).slice(0, VERIFY_TOKEN_LENGTH);
+
+/** Новая заявка из лид-формы: сами ответы формы нужно дочитать по leadId. */
+export interface FormNotice {
+  leadId: string;
+  pageId: string;
+  formId: string | null;
+  /** ID объявления; null — заявка не с рекламы (например, проверочная). */
+  adId: string | null;
+}
+
+/** Первое сообщение клиента, который нажал на объявление «Написать в WhatsApp». */
+export interface AdClick {
+  /** ID номера WhatsApp компании, на который написали. */
+  numberId: string;
+  messageId: string;
+  /** Номер клиента: только цифры, с кодом страны. */
+  from: string;
+  name: string;
+  adId: string;
+  sentAt: string;
+  referral: Record<string, string>;
+}
+
+export interface ParsedWebhook {
+  forms: FormNotice[];
+  clicks: AdClick[];
+}
+
+/** «0» и пустая строка вместо ID значат «нет». */
+const idOrNull = (value: unknown): string | null => {
+  const id = text(value);
+  return id && id !== "0" ? id : null;
+};
+
+function formNotice(value: Json): FormNotice | null {
+  const leadId = idOrNull(value.leadgen_id);
+  const pageId = idOrNull(value.page_id);
+  if (!leadId || !pageId) return null;
+  return { leadId, pageId, formId: idOrNull(value.form_id), adId: idOrNull(value.ad_id) };
+}
+
+function adClicks(value: Json): AdClick[] {
+  const numberId = text(obj(value.metadata).phone_number_id);
+  if (!numberId) return [];
+  const names = new Map(list(value.contacts).map((contact) => [text(obj(contact).wa_id), text(obj(obj(contact).profile).name)]));
+  const clicks: AdClick[] = [];
+  for (const item of list(value.messages)) {
+    const message = obj(item);
+    const referral = obj(message.referral);
+    const adId = idOrNull(referral.source_id);
+    const from = text(message.from).replace(/\D/g, "");
+    const messageId = text(message.id);
+    // Обычные сообщения и переходы с публикаций не считаем: лид — это только нажатие на объявление
+    if (text(referral.source_type) !== AD_SOURCE || !adId || !from || !messageId) continue;
+    const sentMs = Number(text(message.timestamp)) * SECOND_MS;
+    clicks.push({
+      numberId,
+      messageId,
+      from,
+      name: names.get(text(message.from)) ?? "",
+      adId,
+      sentAt: new Date(Number.isFinite(sentMs) && sentMs > 0 ? sentMs : Date.now()).toISOString(),
+      referral: Object.fromEntries(REFERRAL_KEYS.map((key) => [key, text(referral[key])]).filter(([, v]) => v)),
+    });
+  }
+  return clicks;
+}
+
+export function parseWebhook(payload: unknown): ParsedWebhook {
+  const root = obj(payload);
+  const parsed: ParsedWebhook = { forms: [], clicks: [] };
+  for (const entry of list(root.entry)) {
+    for (const item of list(obj(entry).changes)) {
+      const change = obj(item);
+      if (root.object === "page" && change.field === "leadgen") {
+        const notice = formNotice(obj(change.value));
+        if (notice) parsed.forms.push(notice);
+      } else if (root.object === "whatsapp_business_account" && change.field === "messages") {
+        parsed.clicks.push(...adClicks(obj(change.value)));
+      }
+    }
+  }
+  return parsed;
+}
+
+/** Ответы лид-формы объектом «название поля → значение»: в таком виде их разбирает общий разбор заявок. */
+export function fieldsOf(fieldData: unknown): Record<string, string> {
+  const fields: Record<string, string> = {};
+  for (const item of list(fieldData)) {
+    const name = text(obj(item).name);
+    if (name) fields[name] = text(list(obj(item).values)[0]);
+  }
+  return fields;
+}

@@ -112,7 +112,18 @@ async function ingest(key: string, body: Body) {
   const { key: _key, ...payload } = body;
   const { data: created, error } = await admin
     .from("leads")
-    .insert({ workspace_id: workspaceId, phone: lead.phone, name: lead.name, source: "website", ...source, external_id: lead.externalId, utm: lead.utm, raw_payload: payload })
+    .insert({
+      workspace_id: workspaceId,
+      phone: lead.phone,
+      name: lead.name,
+      source: "website",
+      ...source,
+      external_id: lead.externalId,
+      // Объявление могло ещё не загрузиться из кабинета: по этому ID лид привяжется к нему позже
+      external_ad_id: EXTERNAL_ID_RE.test(lead.utm.utm_content ?? "") ? lead.utm.utm_content : null,
+      utm: lead.utm,
+      raw_payload: payload,
+    })
     .select("id")
     .single();
   if (error || !created) throw new HttpError(500, "db_error", error?.message);

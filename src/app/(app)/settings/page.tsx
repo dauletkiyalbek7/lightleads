@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { z } from "zod";
 import { CredentialsDialog } from "@/components/features/credentials-dialog";
 import { AdPlatformConnection } from "@/components/features/ad-connect";
+import { MetaLeadChannels } from "@/components/features/meta-lead-channels";
 import { WorkspaceAvatar } from "@/components/shell/workspace-switcher";
 import { PlatformIcon } from "@/components/kit/brand";
 import { Btn } from "@/components/kit/btn";
@@ -24,6 +25,7 @@ import { celebrate } from "@/lib/confetti";
 import { rateOn } from "@/lib/currency";
 import { addDays, formatDate } from "@/lib/dates";
 import { CURRENCY_SYMBOL, formatMoney, formatNumber } from "@/lib/format";
+import { OAUTH_RETURN_KEY } from "@/lib/meta-leads-api";
 import { DEMO_WORKSPACE_KEY, ingestExample, ingestUrlWithKey, siteSnippet, UTM_TEMPLATES } from "@/lib/snippets";
 import { useApp } from "@/lib/store";
 import { THEME_SWATCH, THEMES } from "@/lib/theme";
@@ -143,9 +145,16 @@ function Connections() {
                 <p className="font-semibold">{s.salesItems[key].name}</p>
               </div>
               <p className="flex-1 text-sm text-muted-foreground">{s.salesItems[key].text}</p>
-              <Btn variant="soft" size="sm" className="self-start" onClick={demo}>
-                {t.common.connect}
-              </Btn>
+              {demoMode ? (
+                <Btn variant="soft" size="sm" className="self-start" onClick={demo}>
+                  {t.common.connect}
+                </Btn>
+              ) : (
+                <Btn variant="soft" size="sm" className="self-start" disabled>
+                  {t.common.connect}
+                  <Pill tone="muted">{t.common.soon}</Pill>
+                </Btn>
+              )}
             </li>
           ))}
         </ul>
@@ -210,34 +219,41 @@ function LeadSources() {
           <p className="text-sm text-muted-foreground">{s.keyLoading}</p>
         </Section>
       )}
-      <div className="grid gap-4 md:gap-6 lg:grid-cols-2">
-        <Section title={s.formsTitle} hint={demoMode ? s.formsHint : s.formsSoonHint}>
-          <ul className="space-y-2">
-            {(
-              [
-                ["meta", s.formsMeta],
-                ["tiktok", s.formsTikTok],
-              ] as const
-            ).map(([platform, label]) => (
-              <li key={platform} className="flex min-h-13 items-center gap-3 rounded-2xl bg-muted/60 px-4">
-                <PlatformIcon platform={platform} size="sm" />
-                <span className="flex-1 text-sm font-medium">{label}</span>
-                {demoMode ? <Pill tone="success">{t.common.connected}</Pill> : <Pill tone="muted">{t.common.soon}</Pill>}
-              </li>
-            ))}
-          </ul>
-        </Section>
-        <Section title={s.whatsappTitle}>
-          <div className="flex gap-3 rounded-2xl border border-warning/30 bg-warning/8 p-4 text-sm leading-relaxed">
-            <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" />
-            <p>{s.whatsappWarning}</p>
-          </div>
-          <p className="mt-3 flex items-start gap-2 text-sm text-muted-foreground">
-            <MessageCircle className="mt-0.5 size-4 shrink-0" />
-            {s.instagramHint}
-          </p>
-        </Section>
-      </div>
+      {demoMode ? (
+        <div className="grid gap-4 md:gap-6 lg:grid-cols-2">
+          <Section title={s.formsTitle} hint={s.formsHint}>
+            <ul className="space-y-2">
+              {(
+                [
+                  ["meta", s.formsMeta],
+                  ["tiktok", s.formsTikTok],
+                ] as const
+              ).map(([platform, label]) => (
+                <li key={platform} className="flex min-h-13 items-center gap-3 rounded-2xl bg-muted/60 px-4">
+                  <PlatformIcon platform={platform} size="sm" />
+                  <span className="flex-1 text-sm font-medium">{label}</span>
+                  <Pill tone="success">{t.common.connected}</Pill>
+                </li>
+              ))}
+            </ul>
+          </Section>
+          <Section title={s.whatsappTitle}>
+            <div className="flex gap-3 rounded-2xl border border-warning/30 bg-warning/8 p-4 text-sm leading-relaxed">
+              <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" />
+              <p>{s.whatsappWarning}</p>
+            </div>
+            <p className="mt-3 flex items-start gap-2 text-sm text-muted-foreground">
+              <MessageCircle className="mt-0.5 size-4 shrink-0" />
+              {s.instagramHint}
+            </p>
+          </Section>
+        </div>
+      ) : (
+        <>
+          <MetaLeadChannels />
+          <p className="px-1 text-sm text-muted-foreground">{t.leadChannels.later}</p>
+        </>
+      )}
     </div>
   );
 }
@@ -630,6 +646,10 @@ function WorkspaceSettings() {
 }
 
 const TAB_PARAM = "tab";
+/** Итог входа в Facebook в адресе страницы: ?meta=connected или ?meta=error&detail=… */
+const META_RESULT_PARAM = "meta";
+const META_DETAIL_PARAM = "detail";
+const ERROR_TOAST_MS = 60_000;
 const PANELS: Record<Tab, () => ReactNode> = {
   connections: Connections,
   leadSources: LeadSources,
@@ -646,7 +666,23 @@ export default function SettingsPage() {
   const [tab, setTab] = useState<Tab>("connections");
   // Ссылки с других экранов открывают нужную вкладку: /settings?tab=leadSources
   useEffect(() => {
-    const wanted = new URLSearchParams(window.location.search).get(TAB_PARAM);
+    const params = new URLSearchParams(window.location.search);
+    let wanted = params.get(TAB_PARAM);
+    try {
+      // Возврат из окна Facebook, где выдавали права на лид-формы или WhatsApp: открываем вкладку источников.
+      // Вкладка «Подключения» при этом не открывается, поэтому итог входа показываем здесь.
+      const back = sessionStorage.getItem(OAUTH_RETURN_KEY);
+      const result = params.get(META_RESULT_PARAM);
+      if (back && result) {
+        sessionStorage.removeItem(OAUTH_RETURN_KEY);
+        wanted = back;
+        window.history.replaceState(null, "", window.location.pathname);
+        if (result === "connected") toast.success(t.leadChannels.granted);
+        else toast.error(params.get(META_DETAIL_PARAM) ?? t.common.genericError, { duration: ERROR_TOAST_MS, closeButton: true });
+      }
+    } catch {
+      /* хранилище недоступно: остаётся вкладка из адреса */
+    }
     if (wanted && (TABS as readonly string[]).includes(wanted)) setTab(wanted as Tab);
   }, []);
   if (!ready) return <PageSkeleton />;

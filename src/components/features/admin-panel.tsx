@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { CredentialsDialog } from "@/components/features/credentials-dialog";
 import { Logo } from "@/components/kit/brand";
 import { Btn } from "@/components/kit/btn";
-import { Field, Input } from "@/components/kit/field";
+import { CopyBlock, Field, Input } from "@/components/kit/field";
 import { Modal } from "@/components/kit/overlay";
 import { Pill } from "@/components/kit/pills";
 import { Sk } from "@/components/kit/states";
@@ -15,6 +15,7 @@ import { Section } from "@/components/kit/surface";
 import { WorkspaceAvatar } from "@/components/shell/workspace-switcher";
 import { t } from "@/i18n";
 import { formatDate } from "@/lib/dates";
+import { metaWebhookInfo } from "@/lib/meta-leads-api";
 import { getBrowserSupabase } from "@/lib/supabase/client";
 import { rowToMember, type MemberRow } from "@/lib/supabase/rows";
 import { callTeam } from "@/lib/team-api";
@@ -147,7 +148,10 @@ export function AdminPanel({ user }: { user: SessionUser }) {
               </Section>
             ))}
           </div>
-          <NewClient onCreated={load} onCredentials={show} />
+          <div className="space-y-4 md:space-y-6">
+            <NewClient user={user} onCreated={load} onCredentials={show} />
+            <MetaWebhook />
+          </div>
         </div>
       </main>
       <CredentialsDialog credentials={credentials} onClose={() => setCredentials(null)} resetTitle={isReset} />
@@ -160,7 +164,7 @@ interface FormProps {
   onCredentials: (data: Credentials) => void;
 }
 
-function NewClient({ onCreated, onCredentials }: FormProps & { onCreated: () => Promise<void> }) {
+function NewClient({ user, onCreated, onCredentials }: FormProps & { user: SessionUser; onCreated: () => Promise<void> }) {
   const s = t.admin;
   const [name, setName] = useState("");
   const [ownerName, setOwnerName] = useState("");
@@ -191,6 +195,17 @@ function NewClient({ onCreated, onCredentials }: FormProps & { onCreated: () => 
         <Field label={s.ownerName}>
           <Input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} autoComplete="off" />
         </Field>
+        {/* Свой проект агентства: владельцем становится сам владелец платформы */}
+        <button
+          type="button"
+          onClick={() => {
+            setOwnerName(user.name);
+            setOwnerEmail(user.email);
+          }}
+          className="text-sm font-medium text-brand underline-offset-4 outline-none hover:underline focus-visible:underline"
+        >
+          {s.forMe}
+        </button>
         <Field label={s.ownerEmail} error={error}>
           <Input type="email" value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} placeholder={t.settings.team.invitePlaceholder} required autoComplete="off" />
         </Field>
@@ -228,6 +243,24 @@ function AddMember({ workspaceId, onAdded, onCredentials }: FormProps & { worksp
         {s.add}
       </Btn>
     </form>
+  );
+}
+
+/** Адрес и проверочная строка вебхука: владелец платформы один раз вписывает их в приложении Meta. */
+function MetaWebhook() {
+  const s = t.admin;
+  const [info, setInfo] = useState<{ callbackUrl: string; verifyToken: string } | null>(null);
+  useEffect(() => {
+    void metaWebhookInfo().then((result) => result.ok && setInfo(result.data));
+  }, []);
+  if (!info) return null;
+  return (
+    <Section title={s.webhookTitle} hint={s.webhookText}>
+      <div className="space-y-3">
+        <CopyBlock text={info.callbackUrl} label={s.webhookUrl} multiline />
+        <CopyBlock text={info.verifyToken} label={s.webhookToken} />
+      </div>
+    </Section>
   );
 }
 
