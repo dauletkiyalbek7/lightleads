@@ -1,10 +1,13 @@
 "use client";
 
-import { ClipboardList, Globe, Hand, MessageCircle, Send, type LucideIcon } from "lucide-react";
+import { ClipboardList, Globe, Hand, MessageCircle, Plus, Send, Trash2, type LucideIcon } from "lucide-react";
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
+import { LeadDialog } from "@/components/features/lead-dialog";
 import { PlatformIcon } from "@/components/kit/brand";
 import { Btn } from "@/components/kit/btn";
 import { Picker, SearchInput } from "@/components/kit/field";
+import { Modal } from "@/components/kit/overlay";
 import { Pill } from "@/components/kit/pills";
 import { Segmented } from "@/components/kit/segmented";
 import { EmptyState, PageSkeleton } from "@/components/kit/states";
@@ -17,6 +20,7 @@ import type { Lead, LeadSource } from "@/lib/types";
 
 type StatusFilter = "all" | "sold" | "open";
 const PAGE_SIZE = 40;
+const LEAD_SOURCES_HREF = "/settings?tab=leadSources";
 const SOURCES: LeadSource[] = ["meta_form", "tiktok_form", "website", "whatsapp", "instagram", "manual"];
 const SOURCE_ICON: Record<LeadSource, LucideIcon> = {
   meta_form: ClipboardList,
@@ -38,7 +42,10 @@ function SourceLabel({ lead }: { lead: Lead }) {
 }
 
 export default function LeadsPage() {
-  const { ready, isEmpty, ds, sales, range, connectHref } = useApp();
+  const { ready, isEmpty, ds, sales, range, connectHref, deleteLead } = useApp();
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [removing, setRemoving] = useState<Lead | null>(null);
+  const [pending, setPending] = useState(false);
   const [query, setQuery] = useState("");
   const [source, setSource] = useState<LeadSource | "all">("all");
   const [status, setStatus] = useState<StatusFilter>("all");
@@ -62,11 +69,39 @@ export default function LeadsPage() {
     });
   }, [ds.leads, range, source, status, query, soldPhones]);
 
+  const confirmRemove = async () => {
+    if (!removing) return;
+    setPending(true);
+    const removed = await deleteLead(removing.id);
+    setPending(false);
+    setRemoving(null);
+    if (removed) toast.success(t.leads.remove.done);
+    else toast.error(t.leads.remove.failed);
+  };
+
   if (!ready) return <PageSkeleton />;
-  if (isEmpty) {
+  // Лиды могут приходить с сайта и до подключения рекламных кабинетов
+  if (!ds.leads.length) {
     return (
       <Surface>
-        <EmptyState title={t.dashboard.emptyTitle} text={t.dashboard.emptyText} action={<Btn href={connectHref}>{t.dashboard.emptyAction}</Btn>} />
+        {isEmpty ? (
+          <EmptyState title={t.dashboard.emptyTitle} text={t.dashboard.emptyText} action={<Btn href={connectHref}>{t.dashboard.emptyAction}</Btn>} />
+        ) : (
+          <EmptyState
+            title={t.leads.emptyTitle}
+            text={t.leads.emptyText}
+            action={
+              <>
+                <Btn href={LEAD_SOURCES_HREF}>{t.leads.emptyAction}</Btn>
+                <Btn variant="secondary" onClick={() => setDialogOpen(true)}>
+                  <Plus />
+                  {t.leads.add}
+                </Btn>
+              </>
+            }
+          />
+        )}
+        <LeadDialog open={dialogOpen} onOpenChange={setDialogOpen} />
       </Surface>
     );
   }
@@ -75,8 +110,32 @@ export default function LeadsPage() {
   const StatusPill = ({ lead }: { lead: Lead }) =>
     soldPhones.has(lead.phone) ? <Pill tone="success">{t.leads.statusSold}</Pill> : <Pill>{t.leads.statusNoSale}</Pill>;
 
+  const RemoveButton = ({ lead }: { lead: Lead }) => (
+    <Btn variant="ghost" size="icon-sm" className="text-subtle hover:bg-danger/10 hover:text-danger" aria-label={t.common.remove} onClick={() => setRemoving(lead)}>
+      <Trash2 />
+    </Btn>
+  );
+
   return (
     <div className="space-y-4">
+      <LeadDialog open={dialogOpen} onOpenChange={setDialogOpen} />
+      <Modal
+        open={removing !== null}
+        onOpenChange={(open) => !open && !pending && setRemoving(null)}
+        title={t.leads.remove.title}
+        footer={
+          <div className="flex flex-wrap justify-end gap-2">
+            <Btn variant="secondary" onClick={() => setRemoving(null)} disabled={pending}>
+              {t.common.cancel}
+            </Btn>
+            <Btn variant="danger" onClick={confirmRemove} disabled={pending}>
+              {t.leads.remove.confirm}
+            </Btn>
+          </div>
+        }
+      >
+        <p className="text-sm leading-relaxed text-muted-foreground">{removing && t.leads.remove.text(formatPhone(removing.phone))}</p>
+      </Modal>
       <div className="flex flex-wrap items-center gap-2">
         <SearchInput
           placeholder={t.leads.searchPlaceholder}
@@ -103,6 +162,10 @@ export default function LeadsPage() {
           ]}
         />
         <p className="num ml-auto hidden text-sm text-muted-foreground lg:block">{t.leads.found(list.length, plural(list.length, t.common.leadForms))}</p>
+        <Btn variant="soft" className="md:h-10" onClick={() => setDialogOpen(true)}>
+          <Plus />
+          {t.leads.add}
+        </Btn>
       </div>
 
       {!shown.length ? (
@@ -119,7 +182,8 @@ export default function LeadsPage() {
                   <th className="px-4 py-3.5 text-left font-medium">{t.leads.lead}</th>
                   <th className="px-4 py-3.5 text-left font-medium">{t.leads.source}</th>
                   <th className="hidden px-4 py-3.5 text-left font-medium lg:table-cell">{t.leads.ad}</th>
-                  <th className="px-5 py-3.5 text-right font-medium">{t.leads.status}</th>
+                  <th className="px-4 py-3.5 text-right font-medium">{t.leads.status}</th>
+                  <th className="w-12 py-3.5 pr-3" aria-label={t.common.remove} />
                 </tr>
               </thead>
               <tbody>
@@ -145,8 +209,11 @@ export default function LeadsPage() {
                         <span className="text-subtle">{t.leads.noAd}</span>
                       )}
                     </td>
-                    <td className="px-5 py-3 text-right">
+                    <td className="px-4 py-3 text-right">
                       <StatusPill lead={l} />
+                    </td>
+                    <td className="py-1.5 pr-3 text-right">
+                      <RemoveButton lead={l} />
                     </td>
                   </tr>
                 ))}
@@ -162,14 +229,16 @@ export default function LeadsPage() {
                     <div className="min-w-0">
                       <p className="num text-[15px] font-semibold">{formatPhone(l.phone)}</p>
                       <p className="text-xs text-muted-foreground">
-                        {l.name} · {formatDayShort(l.date)}, {l.time}
+                        {l.name && `${l.name} · `}
+                        {formatDayShort(l.date)}, {l.time}
                       </p>
                     </div>
                     <StatusPill lead={l} />
                   </div>
                   <div className="mt-3 flex items-center justify-between gap-3">
                     <SourceLabel lead={l} />
-                    <span className="min-w-0 truncate text-xs text-muted-foreground">{l.adId ? adName.get(l.adId) : t.leads.noAd}</span>
+                    <span className="min-w-0 flex-1 truncate text-right text-xs text-muted-foreground">{l.adId ? adName.get(l.adId) : t.leads.noAd}</span>
+                    <RemoveButton lead={l} />
                   </div>
                 </Surface>
               </li>

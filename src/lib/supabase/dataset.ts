@@ -11,6 +11,8 @@ import type {
   Dataset,
   EntityStatus,
   InsightDaily,
+  Lead,
+  LeadSource,
   Objective,
   Platform,
   SyncRun,
@@ -92,6 +94,18 @@ interface InsightRow {
   video_hold: number;
   video_watch_sec: number;
 }
+export interface LeadRow {
+  id: string;
+  phone: string;
+  name: string;
+  source: LeadSource;
+  platform: Platform | null;
+  campaign_id: string | null;
+  adset_id: string | null;
+  ad_id: string | null;
+  created_at: string;
+}
+export const LEAD_COLUMNS = "id, phone, name, source, platform, campaign_id, adset_id, ad_id, created_at";
 interface SyncRunRow {
   id: string;
   account_id: string;
@@ -108,11 +122,11 @@ interface ConnectionRow {
 }
 
 /** Читает все строки таблицы workspace постранично. */
-async function fetchAll<T>(table: string, columns: string, workspaceId: string, order: string, since?: string): Promise<T[]> {
+async function fetchAll<T>(table: string, columns: string, workspaceId: string, order: string, since?: { column: string; value: string }): Promise<T[]> {
   const rows: T[] = [];
   for (let page = 0; page < MAX_PAGES; page++) {
     let query = getBrowserSupabase().from(table).select(columns).eq("workspace_id", workspaceId);
-    if (since) query = query.gte("date", since);
+    if (since) query = query.gte(since.column, since.value);
     const { data, error } = await query
       .order(order)
       .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
@@ -126,6 +140,23 @@ async function fetchAll<T>(table: string, columns: string, workspaceId: string, 
 
 /** Время запуска в часовом поясе приложения, «ГГГГ-ММ-ДД ЧЧ:ММ» — как в журнале синхронизаций. */
 const localStamp = (iso: string) => new Date(iso).toLocaleString("sv-SE", { timeZone: APP.timezone }).slice(0, STAMP_LENGTH);
+
+/** Лид из базы в виде, с которым работают экраны: дата и время — в часовом поясе приложения. */
+export function rowToLead(row: LeadRow): Lead {
+  const [date, time] = localStamp(row.created_at).split(" ");
+  return {
+    id: row.id,
+    phone: row.phone,
+    name: row.name,
+    source: row.source,
+    platform: row.platform,
+    campaignId: row.campaign_id,
+    adsetId: row.adset_id,
+    adId: row.ad_id,
+    date,
+    time,
+  };
+}
 
 /** Стабильный оттенок обложки из идентификатора: пока превью не скачано, показываем градиент. */
 function hueOf(id: string): number {
@@ -143,13 +174,13 @@ export interface WorkspaceData {
 
 /**
  * Данные подключённых кабинетов из Supabase в том же виде, что и демо-набор:
- * экраны и расчёты от источника не зависят. Лиды и продажи появятся в Фазах 4–5.
+ * экраны и расчёты от источника не зависят. Продажи появятся в Фазе 5.
  */
 export async function loadWorkspaceData(workspaceId: string, today: string): Promise<WorkspaceData> {
   const supabase = getBrowserSupabase();
   const since = addDays(today, -LOOKBACK_DAYS);
 
-  const [accountRows, campaignRows, adsetRows, adRows, creativeRows, insightRows, rates, runs, connections] = await Promise.all([
+  const [accountRows, campaignRows, adsetRows, adRows, creativeRows, insightRows, leadRows, rates, runs, connections] = await Promise.all([
     fetchAll<AccountRow>("ad_accounts", "id, platform, name, external_id, currency, timezone, status, last_synced_at, selected", workspaceId, "created_at"),
     fetchAll<CampaignRow>("campaigns", "id, account_id, platform, name, objective, status, daily_budget", workspaceId, "id"),
     fetchAll<AdSetRow>("adsets", "id, campaign_id, name, status", workspaceId, "id"),
@@ -160,8 +191,10 @@ export async function loadWorkspaceData(workspaceId: string, today: string): Pro
       "ad_id, date, currency, spend, impressions, reach, clicks, pixel_purchases, pixel_value, video_plays, video_3s, video_hold, video_watch_sec",
       workspaceId,
       "date",
-      since,
+      { column: "date", value: since },
     ),
+    // Граница периода — начало суток в UTC: на несколько часов шире нужного, лишнее отсекает фильтр по дате на экранах
+    fetchAll<LeadRow>("leads", LEAD_COLUMNS, workspaceId, "created_at", { column: "created_at", value: since }),
     supabase.from("exchange_rates").select("date, usd_kzt").gte("date", since).order("date").returns<{ date: string; usd_kzt: number }[]>(),
     supabase
       .from("sync_runs")
@@ -286,7 +319,8 @@ export async function loadWorkspaceData(workspaceId: string, today: string): Pro
       ads,
       creatives: [...creatives.values()].filter((c) => usedCreatives.has(c.id)),
       insights,
-      leads: [],
+      // Свежие сверху, как в списке лидов
+      leads: leadRows.map(rowToLead).reverse(),
       products: [],
       sales: [],
       rates: Object.fromEntries((rates.data ?? []).map((row) => [row.date, Number(row.usd_kzt)])),

@@ -5,43 +5,21 @@ export const UTM_TEMPLATES = {
 } as const;
 
 export const INGEST_PATH = "/api/ingest/lead";
+export const SNIPPET_PATH = "/ll.js";
+/** Ключ для демо-режима: настоящий выдаётся каждому workspace в базе. */
 export const DEMO_WORKSPACE_KEY = "ws_demo_3f9a1c7e52b84d0a";
 
-/** Сниппет для сайта: хранит UTM, fbclid, ttclid в cookie 30 дней и подставляет в скрытые поля форм. */
-export const SITE_SNIPPET = `<script>
-(function () {
-  var KEYS = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "fbclid", "ttclid"];
-  var DAYS = 30;
-  var params = new URLSearchParams(location.search);
-  KEYS.forEach(function (key) {
-    var value = params.get(key);
-    if (value) {
-      document.cookie = "ll_" + key + "=" + encodeURIComponent(value) +
-        "; path=/; max-age=" + DAYS * 86400 + "; SameSite=Lax";
-    }
-  });
-  function read(key) {
-    var m = document.cookie.match(new RegExp("(?:^|; )ll_" + key + "=([^;]*)"));
-    return m ? decodeURIComponent(m[1]) : "";
-  }
-  document.addEventListener("DOMContentLoaded", function () {
-    document.querySelectorAll("form").forEach(function (form) {
-      KEYS.forEach(function (key) {
-        var input = form.querySelector('input[name="' + key + '"]');
-        if (!input) {
-          input = document.createElement("input");
-          input.type = "hidden";
-          input.name = key;
-          form.appendChild(input);
-        }
-        input.value = read(key);
-      });
-    });
-  });
-})();
-</script>`;
+/**
+ * Одна строка для сайта клиента. Скрипт (public/ll.js) хранит UTM, fbclid и ttclid в cookie 30 дней,
+ * подставляет их в скрытые поля форм и при отправке формы с телефоном передаёт лид в LightLeads.
+ */
+export const siteSnippet = (origin: string, key: string) => `<script src="${origin}${SNIPPET_PATH}" data-key="${key}" async></script>`;
 
-export const ingestExample = (origin: string) => `curl -X POST ${origin}${INGEST_PATH} \\
-  -H "x-workspace-key: ${DEMO_WORKSPACE_KEY}" \\
+/** Пример запроса для своего сервера, Tilda и других вебхуков. */
+export const ingestExample = (origin: string, key: string) => `curl -X POST ${origin}${INGEST_PATH} \\
+  -H "x-workspace-key: ${key}" \\
   -H "content-type: application/json" \\
   -d '{"phone": "8 701 123 45 67", "name": "Айгерим", "utm_source": "facebook", "utm_content": "120210000000000"}'`;
+
+/** Адрес вебхука для конструкторов, где нельзя задать заголовок (Tilda, квизы): ключ передаётся в адресе. */
+export const ingestUrlWithKey = (origin: string, key: string) => `${origin}${INGEST_PATH}?key=${key}`;

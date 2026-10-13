@@ -24,7 +24,7 @@ import { celebrate } from "@/lib/confetti";
 import { rateOn } from "@/lib/currency";
 import { addDays, formatDate } from "@/lib/dates";
 import { CURRENCY_SYMBOL, formatMoney, formatNumber } from "@/lib/format";
-import { DEMO_WORKSPACE_KEY, ingestExample, INGEST_PATH, SITE_SNIPPET, UTM_TEMPLATES } from "@/lib/snippets";
+import { DEMO_WORKSPACE_KEY, ingestExample, ingestUrlWithKey, siteSnippet, UTM_TEMPLATES } from "@/lib/snippets";
 import { useApp } from "@/lib/store";
 import { THEME_SWATCH, THEMES } from "@/lib/theme";
 import type { Credentials } from "@/lib/types";
@@ -178,8 +178,11 @@ function Connections() {
 
 function LeadSources() {
   const s = t.settings.leadSources;
+  const { demoMode, ingestKey } = useApp();
   const [origin, setOrigin] = useState("https://app.lightleads.kz");
   useEffect(() => setOrigin(window.location.origin), []);
+  // У гостя ключ условный: настоящий выдаётся workspace после входа
+  const key = demoMode ? DEMO_WORKSPACE_KEY : ingestKey;
   return (
     <div className="space-y-4 md:space-y-6">
       <Section title={s.utmTitle} hint={s.utmHint}>
@@ -188,20 +191,27 @@ function LeadSources() {
           <CopyBlock text={UTM_TEMPLATES.tiktok} label={<><PlatformIcon platform="tiktok" size="sm" />{t.platform.tiktok}</>} />
         </div>
       </Section>
-      <Section title={s.snippetTitle} hint={s.snippetHint}>
-        <div className="max-h-72 overflow-auto rounded-2xl">
-          <CopyBlock text={SITE_SNIPPET} multiline />
-        </div>
-      </Section>
-      <Section title={s.webhookTitle} hint={s.webhookHint}>
-        <div className="space-y-3">
-          <CopyBlock text={`POST ${origin}${INGEST_PATH}`} />
-          <CopyBlock text={DEMO_WORKSPACE_KEY} label={s.keyLabel} />
-          <CopyBlock text={ingestExample(origin)} multiline />
-        </div>
-      </Section>
+      {key ? (
+        <>
+          <Section title={s.snippetTitle} hint={s.snippetHint}>
+            <CopyBlock text={siteSnippet(origin, key)} multiline />
+            <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{s.snippetNote}</p>
+          </Section>
+          <Section title={s.webhookTitle} hint={s.webhookHint}>
+            <div className="space-y-3">
+              <CopyBlock text={ingestUrlWithKey(origin, key)} label={s.webhookUrlLabel} multiline />
+              <CopyBlock text={key} label={s.keyLabel} />
+              <CopyBlock text={ingestExample(origin, key)} label={s.exampleLabel} multiline />
+            </div>
+          </Section>
+        </>
+      ) : (
+        <Section title={s.snippetTitle}>
+          <p className="text-sm text-muted-foreground">{s.keyLoading}</p>
+        </Section>
+      )}
       <div className="grid gap-4 md:gap-6 lg:grid-cols-2">
-        <Section title={s.formsTitle} hint={s.formsHint}>
+        <Section title={s.formsTitle} hint={demoMode ? s.formsHint : s.formsSoonHint}>
           <ul className="space-y-2">
             {(
               [
@@ -212,7 +222,7 @@ function LeadSources() {
               <li key={platform} className="flex min-h-13 items-center gap-3 rounded-2xl bg-muted/60 px-4">
                 <PlatformIcon platform={platform} size="sm" />
                 <span className="flex-1 text-sm font-medium">{label}</span>
-                <Pill tone="success">{t.common.connected}</Pill>
+                {demoMode ? <Pill tone="success">{t.common.connected}</Pill> : <Pill tone="muted">{t.common.soon}</Pill>}
               </li>
             ))}
           </ul>
@@ -614,6 +624,7 @@ function WorkspaceSettings() {
   );
 }
 
+const TAB_PARAM = "tab";
 const PANELS: Record<Tab, () => ReactNode> = {
   connections: Connections,
   leadSources: LeadSources,
@@ -628,6 +639,11 @@ const PANELS: Record<Tab, () => ReactNode> = {
 export default function SettingsPage() {
   const { ready } = useApp();
   const [tab, setTab] = useState<Tab>("connections");
+  // Ссылки с других экранов открывают нужную вкладку: /settings?tab=leadSources
+  useEffect(() => {
+    const wanted = new URLSearchParams(window.location.search).get(TAB_PARAM);
+    if (wanted && (TABS as readonly string[]).includes(wanted)) setTab(wanted as Tab);
+  }, []);
   if (!ready) return <PageSkeleton />;
   const Panel = PANELS[tab];
   return (

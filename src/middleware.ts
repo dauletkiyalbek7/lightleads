@@ -39,5 +39,6 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)"],
+  // Скрипт для сайтов клиентов и приём лидов сессию не трогают
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg|ll\\.js|api/ingest|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)"],
 };

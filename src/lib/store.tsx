@@ -9,10 +9,12 @@ import { toDual } from "./currency";
 import { addDays, previousPeriod, resolvePeriod, todayISO, type PeriodPreset } from "./dates";
 import { AD_PLATFORMS, adErrorText, REFRESH_SYNC_DAYS, runAdSync } from "./ads-api";
 import { DEFAULT_MARGIN_PCT, DEMO_SALES_CURRENCY, generateDataset } from "./mock/seed";
+import { leadsAdd, leadsDelete, type ManualLeadInput } from "./leads-api";
 import { detectSignals, suggestTargets, type Signal } from "./rules";
 import { scoreCreatives, type CreativeStat } from "./score";
 import { getBrowserSupabase } from "./supabase/client";
-import { loadWorkspaceData, type WorkspaceData } from "./supabase/dataset";
+import { loadWorkspaceData, rowToLead, type WorkspaceData } from "./supabase/dataset";
+import type { FnResult } from "./supabase/functions";
 import { rowToMember, settingsToRow, type MemberRow } from "./supabase/rows";
 import { callTeam, type TeamResult } from "./team-api";
 import type {
@@ -21,6 +23,7 @@ import type {
   Dataset,
   DateRange,
   Dual,
+  Lead,
   Member,
   Product,
   Sale,
@@ -43,6 +46,7 @@ const MINUTE_MS = 60_000;
 const SYNC_DEMO_MS = 1600;
 const PLACEHOLDER_DAY = "2026-01-01";
 const WORKSPACE_STORAGE_KEY = "ll-workspace";
+const TIME_LENGTH = 5;
 
 const DEFAULT_SETTINGS: WorkspaceSettings = {
   salesCurrency: DEMO_SALES_CURRENCY,
@@ -124,6 +128,11 @@ interface AppState {
   analytics: Analytics;
   addSales: (sales: Omit<Sale, "id">[]) => Sale[];
   updateSale: (id: string, patch: Partial<Sale>) => void;
+  /** Ключ workspace для приёма лидов с сайта; у гостя null. */
+  ingestKey: string | null;
+  /** Лид, добавленный вручную. Телефон проверяет и приводит к E.164 сервер. */
+  addLead: (input: ManualLeadInput) => Promise<FnResult<Lead>>;
+  deleteLead: (id: string) => Promise<boolean>;
   addProduct: (p: Omit<Product, "id">) => void;
   removeProduct: (id: string) => void;
   inviteMember: (input: { email: string; name: string }) => Promise<TeamResult<Credentials>>;
@@ -147,8 +156,8 @@ export function useApp(): AppState {
  * Состояние приложения.
  * Гость (session = null) работает в демо-режиме: данные генерируются в браузере.
  * У вошедшего пользователя workspace, настройки и команда лежат в Supabase.
- * Реклама, лиды и продажи подключаются в следующих фазах; до тех пор workspace
- * с флагом demoData показывает те же тестовые данные.
+ * Пока к workspace не подключена реклама и с сайта не пришёл ни один лид, он показывает
+ * те же тестовые данные (флаг demoData). Продажи появятся в Фазе 5.
  */
 export function AppProvider({ children, session = null }: { children: ReactNode; session?: SessionContext | null }) {
   const demoMode = session === null;
@@ -171,6 +180,7 @@ export function AppProvider({ children, session = null }: { children: ReactNode;
   const [saleDialogOpen, setSaleDialogOpen] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState(0);
   const [syncing, setSyncing] = useState(false);
+  const [ingestKey, setIngestKey] = useState<string | null>(null);
 
   // Генерируем после монтирования: «сегодня» зависит от часового пояса, а не от сервера.
   useEffect(() => {
@@ -345,6 +355,67 @@ export function AppProvider({ children, session = null }: { children: ReactNode;
     setSales((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
   }, []);
 
+  // Ключ приёма лидов нужен и до подключения рекламы: сайт можно подключить первым
+  useEffect(() => {
+    setIngestKey(null);
+    if (demoMode) return;
+    let stale = false;
+    void getBrowserSupabase()
+      .from("ingest_keys")
+      .select("key")
+      .eq("workspace_id", workspace.id)
+      .maybeSingle<{ key: string }>()
+      .then(({ data }) => {
+        if (!stale) setIngestKey(data?.key ?? null);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [demoMode, workspace.id]);
+
+  const addLead = useCallback(
+    async (input: ManualLeadInput): Promise<FnResult<Lead>> => {
+      if (usesRealData) {
+        const result = await leadsAdd(workspace.id, input);
+        if (!result.ok) return result;
+        const lead = rowToLead(result.data.lead);
+        setReal((prev) => prev && { ...prev, dataset: { ...prev.dataset, leads: [lead, ...prev.dataset.leads] } });
+        return { ok: true, data: lead };
+      }
+      // Демо-данные живут в браузере: лид добавляется только на этот сеанс
+      const ad = demo?.ads.find((a) => a.id === input.adId);
+      const lead: Lead = {
+        id: `l_new_${Date.now()}`,
+        phone: input.phone,
+        name: input.name,
+        source: "manual",
+        platform: ad?.platform ?? null,
+        campaignId: ad?.campaignId ?? null,
+        adsetId: ad?.adsetId ?? null,
+        adId: ad?.id ?? null,
+        date: todayISO(),
+        time: new Date().toTimeString().slice(0, TIME_LENGTH),
+      };
+      setDemo((prev) => prev && { ...prev, leads: [lead, ...prev.leads] });
+      return { ok: true, data: lead };
+    },
+    [usesRealData, workspace.id, demo?.ads],
+  );
+
+  const deleteLead = useCallback(
+    async (id: string) => {
+      if (usesRealData) {
+        const result = await leadsDelete(workspace.id, id);
+        if (!result.ok) return false;
+        setReal((prev) => prev && { ...prev, dataset: { ...prev.dataset, leads: prev.dataset.leads.filter((l) => l.id !== id) } });
+        return true;
+      }
+      setDemo((prev) => prev && { ...prev, leads: prev.leads.filter((l) => l.id !== id) });
+      return true;
+    },
+    [usesRealData, workspace.id],
+  );
+
   const addProduct = useCallback(
     (p: Omit<Product, "id">) => setProducts((prev) => [...prev, { ...p, id: `p_${Date.now()}` }]),
     [],
@@ -437,6 +508,9 @@ export function AppProvider({ children, session = null }: { children: ReactNode;
     analytics,
     addSales,
     updateSale,
+    ingestKey,
+    addLead,
+    deleteLead,
     addProduct,
     removeProduct,
     inviteMember,
