@@ -12,6 +12,7 @@ import { plural, t } from "@/i18n";
 import { attributeSale, indexLeadsByPhone } from "@/lib/attribution";
 import { celebrate } from "@/lib/confetti";
 import { evaluateRows, guessMapping, parseCsv, REQUIRED_FIELDS, rowToSale, type CsvTable, type ImportField, type Mapping } from "@/lib/csv";
+import { parseXlsx } from "@/lib/xlsx";
 import { addDays, formatDate } from "@/lib/dates";
 import { formatInt } from "@/lib/format";
 import { formatPhone } from "@/lib/phone";
@@ -20,6 +21,7 @@ import { cn } from "@/lib/utils";
 
 const FIELDS: ImportField[] = ["phone", "amount", "date", "product"];
 const NOT_MAPPED = "none";
+const XLSX_RE = /\.xlsx$/i;
 const PREVIEW_ROWS = 8;
 const STATUS_TONE = { ok: "success", bad: "danger", duplicate: "warning" } as const;
 const STATUS_LABEL = { ok: t.sales.importer.rowOk, bad: t.sales.importer.rowBad, duplicate: t.sales.importer.rowDup } as const;
@@ -38,6 +40,7 @@ export function SalesImporter({ open, onOpenChange }: { open: boolean; onOpenCha
   const [mapping, setMapping] = useState<Mapping>({ phone: null, amount: null, date: null, product: null });
   const [skipDuplicates, setSkipDuplicates] = useState(true);
   const [result, setResult] = useState<Result | null>(null);
+  const [pending, setPending] = useState(false);
   const [dragging, setDragging] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -64,8 +67,7 @@ export function SalesImporter({ open, onOpenChange }: { open: boolean; onOpenCha
     if (!next) window.setTimeout(reset, 250);
   };
 
-  const load = (text: string) => {
-    const parsed = parseCsv(text);
+  const show = (parsed: CsvTable | null) => {
     if (!parsed) {
       toast.error(t.sales.importer.parseError);
       return;
@@ -74,7 +76,12 @@ export function SalesImporter({ open, onOpenChange }: { open: boolean; onOpenCha
     setMapping(guessMapping(parsed.headers));
     setStep(1);
   };
-  const onFile = (file?: File) => file?.text().then(load);
+  const load = (text: string) => show(parseCsv(text));
+  const onFile = async (file?: File) => {
+    if (!file) return;
+    if (XLSX_RE.test(file.name)) show(await parseXlsx(file));
+    else load(await file.text());
+  };
   const onDrop = (e: DragEvent) => {
     e.preventDefault();
     setDragging(false);
@@ -98,7 +105,8 @@ export function SalesImporter({ open, onOpenChange }: { open: boolean; onOpenCha
     load(lines.join("\n"));
   };
 
-  const runImport = () => {
+  const runImport = async () => {
+    if (pending) return;
     const byPhone = indexLeadsByPhone(ds.leads);
     const list = toImport.map((r) => rowToSale(r, products, settings.marginPct, settings.salesCurrency));
     const attributed = list.filter(
@@ -108,7 +116,10 @@ export function SalesImporter({ open, onOpenChange }: { open: boolean; onOpenCha
           windowDays: settings.attributionWindow,
         }).lead,
     ).length;
-    addSales(list);
+    setPending(true);
+    const saved = await addSales(list);
+    setPending(false);
+    if (!saved) return;
     setResult({ imported: list.length, attributed, skipped: rows.length - list.length });
     setStep(3);
     celebrate();
@@ -129,7 +140,7 @@ export function SalesImporter({ open, onOpenChange }: { open: boolean; onOpenCha
         <Btn variant="secondary" onClick={() => setStep(1)}>
           {t.common.back}
         </Btn>
-        <Btn className="flex-1" disabled={!toImport.length} onClick={runImport}>
+        <Btn className="flex-1" disabled={!toImport.length || pending} onClick={runImport}>
           {t.sales.importer.importN(toImport.length)}
         </Btn>
       </div>
@@ -175,7 +186,7 @@ export function SalesImporter({ open, onOpenChange }: { open: boolean; onOpenCha
               {t.sales.importer.sample}
             </Btn>
           </div>
-          <input ref={fileRef} type="file" accept=".csv,text/csv" hidden onChange={(e) => onFile(e.target.files?.[0])} />
+          <input ref={fileRef} type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden onChange={(e) => onFile(e.target.files?.[0])} />
         </div>
       )}
 

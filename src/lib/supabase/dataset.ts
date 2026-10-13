@@ -15,6 +15,8 @@ import type {
   LeadSource,
   Objective,
   Platform,
+  Product,
+  Sale,
   SyncRun,
 } from "@/lib/types";
 import { getBrowserSupabase } from "./client";
@@ -106,6 +108,31 @@ export interface LeadRow {
   created_at: string;
 }
 export const LEAD_COLUMNS = "id, phone, name, source, platform, campaign_id, adset_id, ad_id, created_at";
+export interface ProductRow {
+  id: string;
+  name: string;
+  price: number;
+  cost_type: Product["costType"];
+  cost: number;
+  archived_at: string | null;
+}
+export const PRODUCT_COLUMNS = "id, name, price, cost_type, cost, archived_at";
+export interface SaleRow {
+  id: string;
+  phone: string;
+  customer_name: string;
+  amount: number;
+  currency: Currency;
+  product_id: string | null;
+  cost: number;
+  sold_on: string;
+  comment: string;
+  input: Sale["input"];
+  manual_ad_id: string | null;
+  /** Кто внёс продажу. Пусто, если этот человек больше не в workspace. */
+  creator: { full_name: string; email: string } | null;
+}
+export const SALE_COLUMNS = "id, phone, customer_name, amount, currency, product_id, cost, sold_on, comment, input, manual_ad_id, creator:profiles(full_name, email)";
 interface SyncRunRow {
   id: string;
   account_id: string;
@@ -121,14 +148,17 @@ interface ConnectionRow {
   external_user_name: string | null;
 }
 
-/** Читает все строки таблицы workspace постранично. */
+/**
+ * Читает все строки таблицы workspace постранично. order — колонки сортировки через запятую;
+ * вместе они должны однозначно задавать порядок, иначе на границе страниц строки потеряются или повторятся.
+ */
 async function fetchAll<T>(table: string, columns: string, workspaceId: string, order: string, since?: { column: string; value: string }): Promise<T[]> {
   const rows: T[] = [];
   for (let page = 0; page < MAX_PAGES; page++) {
     let query = getBrowserSupabase().from(table).select(columns).eq("workspace_id", workspaceId);
     if (since) query = query.gte(since.column, since.value);
+    for (const column of order.split(",")) query = query.order(column);
     const { data, error } = await query
-      .order(order)
       .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
       .returns<T[]>();
     if (error) throw new Error(`${table}: ${error.message}`);
@@ -158,6 +188,27 @@ export function rowToLead(row: LeadRow): Lead {
   };
 }
 
+export function rowToProduct(row: ProductRow): Product {
+  return { id: row.id, name: row.name, price: Number(row.price), costType: row.cost_type, cost: Number(row.cost), archived: row.archived_at !== null };
+}
+
+export function rowToSale(row: SaleRow): Sale {
+  return {
+    id: row.id,
+    phone: row.phone,
+    customerName: row.customer_name,
+    amount: Number(row.amount),
+    currency: row.currency,
+    productId: row.product_id,
+    cost: Number(row.cost),
+    date: row.sold_on,
+    comment: row.comment,
+    input: row.input,
+    manualAdId: row.manual_ad_id,
+    createdBy: row.creator ? row.creator.full_name || row.creator.email.split("@")[0] : "",
+  };
+}
+
 /** Стабильный оттенок обложки из идентификатора: пока превью не скачано, показываем градиент. */
 function hueOf(id: string): number {
   let hash = 0;
@@ -174,14 +225,14 @@ export interface WorkspaceData {
 
 /**
  * Данные подключённых кабинетов из Supabase в том же виде, что и демо-набор:
- * экраны и расчёты от источника не зависят. Продажи появятся в Фазе 5.
+ * экраны и расчёты от источника не зависят.
  */
 export async function loadWorkspaceData(workspaceId: string, today: string): Promise<WorkspaceData> {
   const supabase = getBrowserSupabase();
   const since = addDays(today, -LOOKBACK_DAYS);
 
-  const [accountRows, campaignRows, adsetRows, adRows, creativeRows, insightRows, leadRows, rates, runs, connections] = await Promise.all([
-    fetchAll<AccountRow>("ad_accounts", "id, platform, name, external_id, currency, timezone, status, last_synced_at, selected", workspaceId, "created_at"),
+  const [accountRows, campaignRows, adsetRows, adRows, creativeRows, insightRows, leadRows, productRows, saleRows, rates, runs, connections] = await Promise.all([
+    fetchAll<AccountRow>("ad_accounts", "id, platform, name, external_id, currency, timezone, status, last_synced_at, selected", workspaceId, "created_at,id"),
     fetchAll<CampaignRow>("campaigns", "id, account_id, platform, name, objective, status, daily_budget", workspaceId, "id"),
     fetchAll<AdSetRow>("adsets", "id, campaign_id, name, status", workspaceId, "id"),
     fetchAll<AdRow>("ads", "id, adset_id, campaign_id, account_id, platform, name, status, creative_id, start_date, end_date", workspaceId, "id"),
@@ -190,11 +241,13 @@ export async function loadWorkspaceData(workspaceId: string, today: string): Pro
       "insights_daily",
       "ad_id, date, currency, spend, impressions, reach, clicks, pixel_purchases, pixel_value, video_plays, video_3s, video_hold, video_watch_sec",
       workspaceId,
-      "date",
+      "date,ad_id",
       { column: "date", value: since },
     ),
     // Граница периода — начало суток в UTC: на несколько часов шире нужного, лишнее отсекает фильтр по дате на экранах
-    fetchAll<LeadRow>("leads", LEAD_COLUMNS, workspaceId, "created_at", { column: "created_at", value: since }),
+    fetchAll<LeadRow>("leads", LEAD_COLUMNS, workspaceId, "created_at,id", { column: "created_at", value: since }),
+    fetchAll<ProductRow>("products", PRODUCT_COLUMNS, workspaceId, "created_at,id"),
+    fetchAll<SaleRow>("sales", SALE_COLUMNS, workspaceId, "sold_on,id", { column: "sold_on", value: since }),
     supabase.from("exchange_rates").select("date, usd_kzt").gte("date", since).order("date").returns<{ date: string; usd_kzt: number }[]>(),
     supabase
       .from("sync_runs")
@@ -326,8 +379,10 @@ export async function loadWorkspaceData(workspaceId: string, today: string): Pro
       insights,
       // Свежие сверху, как в списке лидов
       leads: leadRows.map(rowToLead).reverse(),
-      products: [],
-      sales: [],
+      // Архивные товары остаются в наборе: по ним показывается название у старых продаж
+      products: productRows.map(rowToProduct),
+      // Свежие сверху, как в списке продаж
+      sales: saleRows.map(rowToSale).reverse(),
       rates: Object.fromEntries((rates.data ?? []).map((row) => [row.date, Number(row.usd_kzt)])),
       members: [],
       syncRuns,

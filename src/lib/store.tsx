@@ -11,6 +11,7 @@ import { AD_PLATFORMS, adErrorText, runAdSync } from "./ads-api";
 import { DEFAULT_MARGIN_PCT, DEMO_SALES_CURRENCY, generateDataset } from "./mock/seed";
 import { leadsAdd, leadsDelete, type ManualLeadInput } from "./leads-api";
 import { detectSignals, suggestTargets, type Signal } from "./rules";
+import { productArchive, productInsert, saleDelete, saleSetSource, salesInsert } from "./sales-api";
 import { scoreCreatives, type CreativeStat } from "./score";
 import { getBrowserSupabase } from "./supabase/client";
 import { loadWorkspaceData, rowToLead, type WorkspaceData } from "./supabase/dataset";
@@ -105,7 +106,7 @@ interface AppState {
   renameWorkspace: (name: string) => Promise<boolean>;
   /** Перечитывает данные workspace из базы: после подключения кабинета или синхронизации. */
   reloadData: () => Promise<void>;
-  /** Реклама подключена, а продажи ещё нет: прибыль и ROMI пока считаются без выручки. */
+  /** Реклама подключена, а продаж ещё не внесли: прибыль и ROMI пока считаются без выручки. */
   salesPending: boolean;
   /** Куда вести кнопку «Подключить» из пустых экранов. */
   connectHref: string;
@@ -126,15 +127,18 @@ interface AppState {
   currency: Currency;
   setCurrency: (c: Currency) => void;
   analytics: Analytics;
-  addSales: (sales: Omit<Sale, "id">[]) => Sale[];
-  updateSale: (id: string, patch: Partial<Sale>) => void;
+  /** false — сохранить не удалось (сообщение об ошибке уже показано). */
+  addSales: (sales: Omit<Sale, "id">[]) => Promise<boolean>;
+  /** Источник продажи, выбранный вручную; null — убрать выбор. */
+  setSaleSource: (id: string, adId: string | null) => Promise<boolean>;
+  deleteSale: (id: string) => Promise<boolean>;
   /** Ключ workspace для приёма лидов с сайта; у гостя null. */
   ingestKey: string | null;
   /** Лид, добавленный вручную. Телефон проверяет и приводит к E.164 сервер. */
   addLead: (input: ManualLeadInput) => Promise<FnResult<Lead>>;
   deleteLead: (id: string) => Promise<boolean>;
-  addProduct: (p: Omit<Product, "id">) => void;
-  removeProduct: (id: string) => void;
+  addProduct: (p: Omit<Product, "id">) => Promise<boolean>;
+  removeProduct: (id: string) => Promise<boolean>;
   inviteMember: (input: { email: string; name: string }) => Promise<TeamResult<Credentials>>;
   removeMember: (userId: string) => Promise<boolean>;
   saleDialogOpen: boolean;
@@ -157,7 +161,7 @@ export function useApp(): AppState {
  * Гость (session = null) работает в демо-режиме: данные генерируются в браузере.
  * У вошедшего пользователя workspace, настройки и команда лежат в Supabase.
  * Пока к workspace не подключена реклама и с сайта не пришёл ни один лид, он показывает
- * те же тестовые данные (флаг demoData). Продажи появятся в Фазе 5.
+ * те же тестовые данные (флаг demoData), и продажи с товарами в нём тоже живут только в браузере.
  */
 export function AppProvider({ children, session = null }: { children: ReactNode; session?: SessionContext | null }) {
   const demoMode = session === null;
@@ -241,14 +245,19 @@ export function AppProvider({ children, session = null }: { children: ReactNode;
     return isEmpty ? blankDataset(demo.today, demo.rates, demo.members.slice(0, 1)) : demo;
   }, [demo, isEmpty, usesRealData, real]);
 
-  // Продажи и товары из базы появятся в Фазе 5; до тех пор у настоящих данных их нет
-  const wsSales = isEmpty || usesRealData ? NO_SALES : sales;
-  const wsProducts = isEmpty || usesRealData ? NO_PRODUCTS : products;
+  // У настоящих данных продажи и товары лежат в базе, у демо-набора — в памяти браузера
+  const realSales = real?.dataset.sales;
+  const realProducts = real?.dataset.products;
+  const wsSales = usesRealData ? (realSales ?? NO_SALES) : isEmpty ? NO_SALES : sales;
+  const wsProducts = useMemo(() => {
+    if (usesRealData) return realProducts?.filter((p) => !p.archived) ?? NO_PRODUCTS;
+    return isEmpty ? NO_PRODUCTS : products;
+  }, [usesRealData, realProducts, isEmpty, products]);
 
   const range = useMemo(() => resolvePeriod(preset, today || PLACEHOLDER_DAY, custom), [preset, today, custom]);
   const previousRange = useMemo(() => previousPeriod(range), [range]);
 
-  /** Реклама уже настоящая, а продаж в базе ещё нет (до Фазы 5). */
+  /** Реклама уже настоящая, а продаж в базе ещё нет. */
   const salesPending = usesRealData && wsSales.length === 0;
 
   const attributions = useMemo(
@@ -344,16 +353,60 @@ export function AppProvider({ children, session = null }: { children: ReactNode;
     window.location.assign("/login");
   }, []);
 
-  const addSales = useCallback((list: Omit<Sale, "id">[]) => {
-    const stamp = Date.now();
-    const created = list.map((s, i) => ({ ...s, id: `s_new_${stamp}_${i}` }));
-    setSales((prev) => [...created, ...prev].sort((a, b) => b.date.localeCompare(a.date)));
-    return created;
-  }, []);
+  /** Меняет набор настоящих данных на месте: после записи в базу перечитывать всё незачем. */
+  const patchDataset = useCallback(
+    (change: (dataset: Dataset) => Partial<Dataset>) => setReal((prev) => prev && { ...prev, dataset: { ...prev.dataset, ...change(prev.dataset) } }),
+    [],
+  );
 
-  const updateSale = useCallback((id: string, patch: Partial<Sale>) => {
-    setSales((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
-  }, []);
+  const addSales = useCallback(
+    async (list: Omit<Sale, "id">[]) => {
+      const newestFirst = (a: Sale, b: Sale) => b.date.localeCompare(a.date);
+      if (usesRealData) {
+        const created = await salesInsert(workspace.id, list);
+        if (!created) {
+          toast.error(t.common.saveFailed);
+          return false;
+        }
+        patchDataset((dataset) => ({ sales: [...created, ...dataset.sales].sort(newestFirst) }));
+        return true;
+      }
+      const stamp = Date.now();
+      const created = list.map((s, i) => ({ ...s, id: `s_new_${stamp}_${i}` }));
+      setSales((prev) => [...created, ...prev].sort(newestFirst));
+      return true;
+    },
+    [usesRealData, workspace.id, patchDataset],
+  );
+
+  const setSaleSource = useCallback(
+    async (id: string, adId: string | null) => {
+      const withSource = (list: Sale[]) => list.map((s) => (s.id === id ? { ...s, manualAdId: adId } : s));
+      if (!usesRealData) {
+        setSales(withSource);
+        return true;
+      }
+      const saved = await saleSetSource(id, adId);
+      if (saved) patchDataset((dataset) => ({ sales: withSource(dataset.sales) }));
+      else toast.error(t.common.saveFailed);
+      return saved;
+    },
+    [usesRealData, patchDataset],
+  );
+
+  const deleteSale = useCallback(
+    async (id: string) => {
+      const without = (list: Sale[]) => list.filter((s) => s.id !== id);
+      if (!usesRealData) {
+        setSales(without);
+        return true;
+      }
+      const removed = await saleDelete(id);
+      if (removed) patchDataset((dataset) => ({ sales: without(dataset.sales) }));
+      return removed;
+    },
+    [usesRealData, patchDataset],
+  );
 
   // Ключ приёма лидов нужен и до подключения рекламы: сайт можно подключить первым
   useEffect(() => {
@@ -379,7 +432,7 @@ export function AppProvider({ children, session = null }: { children: ReactNode;
         const result = await leadsAdd(workspace.id, input);
         if (!result.ok) return result;
         const lead = rowToLead(result.data.lead);
-        setReal((prev) => prev && { ...prev, dataset: { ...prev.dataset, leads: [lead, ...prev.dataset.leads] } });
+        patchDataset((dataset) => ({ leads: [lead, ...dataset.leads] }));
         return { ok: true, data: lead };
       }
       // Демо-данные живут в браузере: лид добавляется только на этот сеанс
@@ -399,7 +452,7 @@ export function AppProvider({ children, session = null }: { children: ReactNode;
       setDemo((prev) => prev && { ...prev, leads: [lead, ...prev.leads] });
       return { ok: true, data: lead };
     },
-    [usesRealData, workspace.id, demo?.ads],
+    [usesRealData, workspace.id, demo?.ads, patchDataset],
   );
 
   const deleteLead = useCallback(
@@ -407,20 +460,41 @@ export function AppProvider({ children, session = null }: { children: ReactNode;
       if (usesRealData) {
         const result = await leadsDelete(workspace.id, id);
         if (!result.ok) return false;
-        setReal((prev) => prev && { ...prev, dataset: { ...prev.dataset, leads: prev.dataset.leads.filter((l) => l.id !== id) } });
+        patchDataset((dataset) => ({ leads: dataset.leads.filter((l) => l.id !== id) }));
         return true;
       }
       setDemo((prev) => prev && { ...prev, leads: prev.leads.filter((l) => l.id !== id) });
       return true;
     },
-    [usesRealData, workspace.id],
+    [usesRealData, workspace.id, patchDataset],
   );
 
   const addProduct = useCallback(
-    (p: Omit<Product, "id">) => setProducts((prev) => [...prev, { ...p, id: `p_${Date.now()}` }]),
-    [],
+    async (p: Omit<Product, "id">) => {
+      if (!usesRealData) {
+        setProducts((prev) => [...prev, { ...p, id: `p_${Date.now()}` }]);
+        return true;
+      }
+      const created = await productInsert(workspace.id, p);
+      if (created) patchDataset((dataset) => ({ products: [...dataset.products, created] }));
+      return created !== null;
+    },
+    [usesRealData, workspace.id, patchDataset],
   );
-  const removeProduct = useCallback((id: string) => setProducts((prev) => prev.filter((p) => p.id !== id)), []);
+
+  const removeProduct = useCallback(
+    async (id: string) => {
+      if (!usesRealData) {
+        setProducts((prev) => prev.filter((p) => p.id !== id));
+        return true;
+      }
+      // Товар уходит в архив: у старых продаж остаётся его название
+      const archived = await productArchive(id);
+      if (archived) patchDataset((dataset) => ({ products: dataset.products.map((p) => (p.id === id ? { ...p, archived: true } : p)) }));
+      return archived;
+    },
+    [usesRealData, patchDataset],
+  );
   const inviteMember = useCallback(
     async ({ email, name }: { email: string; name: string }): Promise<TeamResult<Credentials>> => {
       if (demoMode) {
@@ -507,7 +581,8 @@ export function AppProvider({ children, session = null }: { children: ReactNode;
     setCurrency,
     analytics,
     addSales,
-    updateSale,
+    setSaleSource,
+    deleteSale,
     ingestKey,
     addLead,
     deleteLead,

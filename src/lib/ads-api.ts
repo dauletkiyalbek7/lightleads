@@ -56,9 +56,16 @@ export async function adsConfigured(platform: Platform): Promise<boolean> {
   }
 }
 
+/**
+ * Так платформы сообщают, что исчерпан лимит запросов к кабинету (в большом кабинете первая загрузка
+ * делает их много). Вместо английского текста показываем, что делать.
+ */
+const RATE_LIMIT_RE = /too many calls|request limit reached|rate limit/i;
+
 /** Текст ошибки для пользователя: наш перевод кода, иначе пояснение самой платформы. */
 export function adErrorText(platform: Platform, result: { error: string; detail?: string }): string {
   const s = t.ads[platform];
+  if (result.detail && RATE_LIMIT_RE.test(result.detail)) return t.ads.rateLimited;
   const known: Record<string, string> = { not_configured: s.notConfigured, token_expired: s.tokenExpired, not_connected: s.notConnected };
   const fallback: Record<string, string> = { platform_error: s.platformError, ...t.ads.errors };
   return known[result.error] ?? result.detail ?? fallback[result.error] ?? t.common.genericError;

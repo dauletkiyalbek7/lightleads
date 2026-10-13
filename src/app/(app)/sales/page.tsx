@@ -1,8 +1,8 @@
 "use client";
 
-import { ChevronRight, Plus, TriangleAlert, Upload } from "lucide-react";
+import { ChevronRight, Plus, Trash2, TriangleAlert, Upload } from "lucide-react";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { NO_AD, useAdOptions } from "@/components/features/sale-dialog";
 import { SalesImporter } from "@/components/features/sales-importer";
@@ -21,7 +21,7 @@ import { saleMoney } from "@/lib/analytics";
 import { findDuplicate, type Attribution } from "@/lib/attribution";
 import { addDual, zeroDual } from "@/lib/currency";
 import { addDays, diffDays, formatDate, formatDayShort, inRange } from "@/lib/dates";
-import { formatInt } from "@/lib/format";
+import { formatInt, formatMoney } from "@/lib/format";
 import { agoLabel } from "@/lib/labels";
 import { formatPhone } from "@/lib/phone";
 import { useApp } from "@/lib/store";
@@ -54,8 +54,15 @@ function SourceCell({ attribution, compact }: { attribution?: Attribution; compa
 }
 
 function SaleDetail({ sale, onClose }: { sale: Sale | null; onClose: () => void }) {
-  const { ds, sales, attributions, settings, updateSale } = useApp();
+  const { ds, sales, attributions, settings, setSaleSource, deleteSale } = useApp();
   const adOptions = useAdOptions(ds);
+  const [removing, setRemoving] = useState(false);
+  const [pending, setPending] = useState(false);
+
+  // Окно подтверждения относится к одной продаже: с другой оно начинается закрытым
+  const saleId = sale?.id;
+  useEffect(() => setRemoving(false), [saleId]);
+
   if (!sale) return <Modal open={false} onOpenChange={onClose} title={t.sales.detailTitle}>{null}</Modal>;
 
   const attribution = attributions.get(sale.id);
@@ -66,6 +73,15 @@ function SaleDetail({ sale, onClose }: { sale: Sale | null; onClose: () => void 
   const windowStart = addDays(sale.date, -settings.attributionWindow);
   const adName = (id: string | null) => ds.ads.find((a) => a.id === id)?.name ?? t.leads.noAd;
   const canPickSource = attribution?.mode !== "auto";
+
+  const confirmRemove = async () => {
+    setPending(true);
+    const removed = await deleteSale(sale.id);
+    setPending(false);
+    if (!removed) return void toast.error(t.sales.remove.failed);
+    toast.success(t.sales.remove.done);
+    onClose();
+  };
 
   return (
     <Modal open onOpenChange={(o) => !o && onClose()} title={t.sales.detailTitle} description={`${formatPhone(sale.phone)} · ${formatDate(sale.date)}`}>
@@ -126,9 +142,8 @@ function SaleDetail({ sale, onClose }: { sale: Sale | null; onClose: () => void 
               <p className="mb-1.5 text-xs text-muted-foreground">{t.sales.chooseSource}</p>
               <Picker
                 value={sale.manualAdId ?? NO_AD}
-                onChange={(v) => {
-                  updateSale(sale.id, { manualAdId: v === NO_AD ? null : v });
-                  toast.success(t.sales.sourceSaved);
+                onChange={async (v) => {
+                  if (await setSaleSource(sale.id, v === NO_AD ? null : v)) toast.success(t.sales.sourceSaved);
                 }}
                 options={adOptions}
                 ariaLabel={t.sales.chooseSourcePlaceholder}
@@ -172,6 +187,25 @@ function SaleDetail({ sale, onClose }: { sale: Sale | null; onClose: () => void 
             <p className="mt-3 rounded-2xl bg-muted/60 p-3.5 text-sm text-muted-foreground">{t.sales.noTouches}</p>
           )}
         </div>
+
+        {removing ? (
+          <div className="rounded-2xl border border-danger/30 bg-danger/5 p-3.5">
+            <p className="text-sm leading-relaxed">{t.sales.remove.text(formatPhone(sale.phone), formatMoney(sale.amount, sale.currency))}</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Btn variant="danger" size="sm" onClick={confirmRemove} disabled={pending}>
+                {t.sales.remove.confirm}
+              </Btn>
+              <Btn variant="ghost" size="sm" onClick={() => setRemoving(false)} disabled={pending}>
+                {t.common.cancel}
+              </Btn>
+            </div>
+          </div>
+        ) : (
+          <Btn variant="ghost" size="sm" className="text-danger hover:bg-danger/10 hover:text-danger" onClick={() => setRemoving(true)}>
+            <Trash2 />
+            {t.sales.remove.action}
+          </Btn>
+        )}
       </div>
     </Modal>
   );

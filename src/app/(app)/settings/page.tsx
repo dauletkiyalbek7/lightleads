@@ -341,14 +341,19 @@ function Products() {
   const [costType, setCostType] = useState<Product["costType"]>("amount");
   const symbol = CURRENCY_SYMBOL[settings.salesCurrency];
 
-  const submit = (e: FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !Number(price)) return;
-    addProduct({ name: name.trim(), price: Number(price), cost: Number(cost) || 0, costType });
+    const saved = await addProduct({ name: name.trim(), price: Number(price), cost: Number(cost) || 0, costType });
+    if (!saved) return void toast.error(s.ownerOnly);
     setName("");
     setPrice("");
     setCost("");
     toast.success(s.added);
+  };
+
+  const remove = async (id: string) => {
+    if (!(await removeProduct(id))) toast.error(s.ownerOnly);
   };
 
   return (
@@ -367,7 +372,7 @@ function Products() {
                 <span className="num text-sm font-semibold">{formatMoney(p.price, settings.salesCurrency)}</span>
                 <button
                   type="button"
-                  onClick={() => removeProduct(p.id)}
+                  onClick={() => void remove(p.id)}
                   aria-label={t.common.remove}
                   className="inline-flex size-11 items-center justify-center rounded-xl text-subtle outline-none hover:bg-danger/10 hover:text-danger focus-visible:ring-4 focus-visible:ring-brand/25"
                 >

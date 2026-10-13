@@ -48,6 +48,7 @@ type Errors = Partial<Record<"phone" | "amount" | "date", string>>;
 export function SaleDialog() {
   const { saleDialogOpen, setSaleDialogOpen, ds, products, sales, settings, today, addSales, members } = useApp();
   const [phone, setPhone] = useState("");
+  const [pending, setPending] = useState(false);
   const [amount, setAmount] = useState("");
   const [productId, setProductId] = useState(NO_PRODUCT);
   const [cost, setCost] = useState("");
@@ -110,8 +111,9 @@ export function SaleDialog() {
       .refine((v) => v <= today, t.sales.form.errors.future),
   });
 
-  const submit = (e: FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (pending) return;
     const parsed = schema.safeParse({ phone, amount: amountValue, date });
     if (!parsed.success) {
       const next: Errors = {};
@@ -120,7 +122,8 @@ export function SaleDialog() {
       return;
     }
     const hasLead = Boolean(attribution?.lead);
-    addSales([
+    setPending(true);
+    const saved = await addSales([
       {
         phone: normalized!,
         customerName: attribution?.lead?.name ?? "",
@@ -135,6 +138,9 @@ export function SaleDialog() {
         createdBy: members[0]?.name ?? "",
       },
     ]);
+    setPending(false);
+    // Не сохранилось: окно остаётся открытым, введённое не пропадает
+    if (!saved) return;
     setSaleDialogOpen(false);
     celebrate();
     const manualAd = ds.ads.find((a) => a.id === manualAdId);
@@ -156,7 +162,7 @@ export function SaleDialog() {
       title={t.sales.form.title}
       description={t.sales.form.subtitle}
       footer={
-        <Btn type="submit" form="sale-form" size="lg" className="w-full">
+        <Btn type="submit" form="sale-form" size="lg" className="w-full" disabled={pending}>
           {t.sales.form.submit}
         </Btn>
       }

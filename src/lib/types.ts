@@ -155,6 +155,8 @@ export interface Product {
   price: number;
   costType: "amount" | "percent";
   cost: number;
+  /** Убран из справочника: в списках выбора не показывается, но название у старых продаж остаётся. */
+  archived?: boolean;
 }
 
 export type SaleInput = "manual" | "csv" | "sheets" | "amocrm" | "bitrix24";
