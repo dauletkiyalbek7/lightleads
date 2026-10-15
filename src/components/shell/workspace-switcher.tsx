@@ -1,7 +1,9 @@
 "use client";
 
-import { Check, ChevronsUpDown, Plus } from "lucide-react";
+import { Building2, Check, ChevronsUpDown, Plus } from "lucide-react";
 import Link from "next/link";
+import { useState } from "react";
+import { NewProjectDialog } from "@/components/features/new-project-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,10 +37,12 @@ export function WorkspaceAvatar({ name, className }: { name: string; className?:
   );
 }
 
-/** Переключатель workspace: у пользователя может быть несколько компаний. */
+/** Переключатель проектов. Новый проект создаёт себе любой вошедший человек. */
 export function WorkspaceSwitcher({ labelClassName, className }: { labelClassName?: string; className?: string }) {
-  const { workspaces, workspace, setWorkspaceId, user } = useApp();
+  const { workspaces, workspace, setWorkspaceId, user, demoMode } = useApp();
+  const [creating, setCreating] = useState(false);
   return (
+    <>
     <DropdownMenu>
       <DropdownMenuTrigger
         className={cn(
@@ -62,21 +66,31 @@ export function WorkspaceSwitcher({ labelClassName, className }: { labelClassNam
             {ws.id === workspace.id && <Check className="size-4 text-brand" />}
           </DropdownMenuItem>
         ))}
-        {/* Workspace создаёт только владелец платформы: регистрации нет */}
-        {user?.isPlatformAdmin && (
+        {/* Гость в демо проектов не создаёт: для этого нужен аккаунт */}
+        {!demoMode && (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuItem asChild className="min-h-11 gap-2.5 rounded-xl text-muted-foreground">
-              <Link href="/admin">
-                <span className="inline-flex size-8 items-center justify-center rounded-[10px] bg-muted">
-                  <Plus className="size-4" />
-                </span>
-                {t.nav.newWorkspace}
-              </Link>
+            <DropdownMenuItem onSelect={() => setCreating(true)} className="min-h-11 gap-2.5 rounded-xl text-muted-foreground">
+              <span className="inline-flex size-8 items-center justify-center rounded-[10px] bg-muted">
+                <Plus className="size-4" />
+              </span>
+              {t.nav.newWorkspace}
             </DropdownMenuItem>
           </>
         )}
+        {user?.isPlatformAdmin && (
+          <DropdownMenuItem asChild className="min-h-11 gap-2.5 rounded-xl text-muted-foreground">
+            <Link href="/admin">
+              <span className="inline-flex size-8 items-center justify-center rounded-[10px] bg-muted">
+                <Building2 className="size-4" />
+              </span>
+              {t.nav.admin}
+            </Link>
+          </DropdownMenuItem>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
+    <NewProjectDialog open={creating} onOpenChange={setCreating} />
+    </>
   );
 }

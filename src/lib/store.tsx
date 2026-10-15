@@ -17,7 +17,7 @@ import { getBrowserSupabase } from "./supabase/client";
 import { loadWorkspaceData, rowToLead, type WorkspaceData } from "./supabase/dataset";
 import type { FnResult } from "./supabase/functions";
 import { rowToMember, settingsToRow, type MemberRow } from "./supabase/rows";
-import { callTeam, type TeamResult } from "./team-api";
+import { callTeam, type TeamResult, WORKSPACE_STORAGE_KEY } from "./team-api";
 import type {
   Credentials,
   Currency,
@@ -46,7 +46,6 @@ const INITIAL_SYNC_MINUTES_AGO = 12;
 const MINUTE_MS = 60_000;
 const SYNC_DEMO_MS = 1600;
 const PLACEHOLDER_DAY = "2026-01-01";
-const WORKSPACE_STORAGE_KEY = "ll-workspace";
 const TIME_LENGTH = 5;
 
 const DEFAULT_SETTINGS: WorkspaceSettings = {
