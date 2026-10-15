@@ -222,6 +222,14 @@ export default function LandingPage() {
 
       <footer className="relative mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 border-t border-border px-4 py-8 text-sm text-muted-foreground sm:flex-row md:px-6">
         <Logo />
+        <nav className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+          <Link href="/privacy" className="hover:text-foreground">
+            {t.legal.links.privacy}
+          </Link>
+          <Link href="/data-deletion" className="hover:text-foreground">
+            {t.legal.links.deletion}
+          </Link>
+        </nav>
         <p>
           © {new Date().getFullYear()} {t.common.appName} · {l.footer}
         </p>

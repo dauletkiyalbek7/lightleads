@@ -18,6 +18,9 @@ export function AuthShell({ title, text, children, footer }: { title: string; te
           <div className="mt-8">{children}</div>
           <div className="mt-6 text-center text-sm text-muted-foreground">{footer}</div>
         </div>
+        <Link href="/privacy" className="self-center text-xs text-subtle hover:text-foreground">
+          {t.legal.links.privacy}
+        </Link>
       </div>
 
       <div className="relative hidden overflow-hidden p-3 lg:block">

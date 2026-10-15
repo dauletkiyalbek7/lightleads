@@ -3,6 +3,7 @@
 //   POST + X-Hub-Signature-256            — уведомление Meta: заявка из лид-формы или сообщение WhatsApp с рекламы
 //   POST {action} + JWT                   — действия владельца: выдать доступ, выбрать страницы и номера
 //   POST {action:"cron"} + x-cron-secret  — раз в час: дочитать пропущенные заявки форм и привязать лиды к новым объявлениям
+//   POST signed_request (форма)           — Meta просит удалить данные человека, удалившего приложение (Data Deletion Callback)
 // Вход в Facebook завершает функция `meta-oauth`: её адрес возврата уже разрешён в приложении Meta.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import {
@@ -21,7 +22,7 @@ import {
 } from "../_shared/core.ts";
 import { extractLead, normalizePhone } from "../leads/extract.ts";
 import { DIALOG_URL, GRAPH_URL, graphGet, graphList, META_APP_ID, META_APP_SECRET, META_LOGIN_CONFIG_ID, META_SCOPES } from "../meta-oauth/lib.ts";
-import { type AdClick, fieldsOf, type FormNotice, parseWebhook, verifySignature, verifyToken } from "./webhook.ts";
+import { type AdClick, fieldsOf, type FormNotice, parseSignedRequest, parseWebhook, verifySignature, verifyToken } from "./webhook.ts";
 
 const SECOND_MS = 1000;
 const HOUR_MS = 60 * 60 * SECOND_MS;
@@ -42,6 +43,9 @@ const UNIQUE_VIOLATION = "23505";
 /** Необязательно: конфигурация Facebook Login for Business с правами на страницы, лид-формы и WhatsApp. */
 const LEADS_CONFIG_ID = Deno.env.get("META_LEADS_CONFIG_ID") ?? "";
 const WEBHOOK_URL = `${SUPABASE_URL}/functions/v1/meta-leads`;
+/** Страница, где человек видит, что его запрос на удаление выполнен. */
+const DELETION_STATUS_URL = `${ALLOWED_ORIGINS[0]}/data-deletion`;
+const CONFIRMATION_CODE_BYTES = 8;
 
 const LEAD_FIELDS = "id,created_time,field_data";
 /** ID объявления в заявке Meta отдаёт не при всех правах: просим его, а при отказе читаем без него. */
@@ -300,6 +304,32 @@ async function verifyWebhook(url: URL): Promise<Response> {
   return valid ? new Response(url.searchParams.get("hub.challenge") ?? "", { status: 200 }) : new Response("forbidden", { status: 403 });
 }
 
+// ---------- Удаление данных по запросу Meta ----------
+
+/**
+ * Человек удалил приложение LightLeads в настройках Facebook. Удаляем то, что получили о нём лично:
+ * ключ доступа, имя и ID профиля Facebook. Рекламная статистика, заявки и продажи принадлежат
+ * бизнесу-владельцу проекта и остаются; их удаляют вместе с проектом.
+ */
+async function dataDeletion(signedRequest: string) {
+  const userId = await parseSignedRequest(META_APP_SECRET, signedRequest);
+  if (!userId) throw new HttpError(400, "bad_signed_request");
+  const code = Array.from(crypto.getRandomValues(new Uint8Array(CONFIRMATION_CODE_BYTES)), (b) => b.toString(16).padStart(2, "0")).join("");
+
+  const { data: connections } = await admin.from("ad_connections").select("id, workspace_id").eq("platform", "meta").eq("external_user_id", userId);
+  for (const connection of connections ?? []) {
+    const { error } = await admin.from("ad_connection_secrets").delete().eq("connection_id", connection.id);
+    if (error) throw new HttpError(500, "db_error", error.message);
+    await admin
+      .from("ad_connections")
+      .update({ status: "disconnected", external_user_id: null, external_user_name: null, scopes: [], updated_at: new Date().toISOString() })
+      .eq("id", connection.id);
+  }
+  // В журнал — только код и число подключений: ID профиля после удаления не храним
+  await admin.from("audit_log").insert({ workspace_id: null, actor_id: null, action: "meta.data_deletion", details: { code, connections: connections?.length ?? 0 } });
+  return { url: `${DELETION_STATUS_URL}?code=${code}`, confirmation_code: code };
+}
+
 // ---------- Плановая проверка лид-форм ----------
 
 async function formLeads(formId: string, sinceMs: number, token: string): Promise<GraphLead[]> {
@@ -486,7 +516,7 @@ async function select(caller: Caller, body: Body) {
 async function webhookInfo(caller: Caller) {
   if (!caller.isPlatformAdmin) throw new HttpError(403, "forbidden");
   if (!META_APP_SECRET) throw new HttpError(503, "not_configured");
-  return { callbackUrl: WEBHOOK_URL, verifyToken: await verifyToken(META_APP_SECRET) };
+  return { callbackUrl: WEBHOOK_URL, verifyToken: await verifyToken(META_APP_SECRET), deletionUrl: WEBHOOK_URL, privacyUrl: `${ALLOWED_ORIGINS[0]}/privacy` };
 }
 
 const ACTIONS: Record<string, (caller: Caller, body: Body) => Promise<unknown>> = { start, options, select, webhook_info: webhookInfo };
@@ -502,6 +532,10 @@ Deno.serve(async (req: Request) => {
     }
     if (req.method !== "POST") throw new HttpError(405, "method_not_allowed");
     if (req.headers.has("x-hub-signature-256")) return await webhook(req);
+    if ((req.headers.get("content-type") ?? "").includes("application/x-www-form-urlencoded")) {
+      const form = new URLSearchParams(await req.text());
+      return json(await dataDeletion(form.get("signed_request") ?? ""));
+    }
 
     const body = (await req.json().catch(() => ({}))) as Body;
     const name = String(body.action ?? "");

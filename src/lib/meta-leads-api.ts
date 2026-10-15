@@ -53,5 +53,12 @@ export const metaLeadsOptions = (workspaceId: string, kind: ChannelKind) => call
 
 export const metaLeadsSelect = (workspaceId: string, kind: ChannelKind, ids: string[]) => callFunction<ChannelSelection>(FUNCTION, { action: "select", workspaceId, kind, ids });
 
-/** Адрес и проверочная строка вебхука для настроек приложения Meta. Отдаётся только владельцу платформы. */
-export const metaWebhookInfo = () => callFunction<{ callbackUrl: string; verifyToken: string }>(FUNCTION, { action: "webhook_info" });
+/** Что вписать в настройки приложения Meta: вебхук, политика конфиденциальности, удаление данных. Только для владельца платформы. */
+export interface MetaAppSettings {
+  callbackUrl: string;
+  verifyToken: string;
+  privacyUrl: string;
+  deletionUrl: string;
+}
+
+export const metaWebhookInfo = () => callFunction<MetaAppSettings>(FUNCTION, { action: "webhook_info" });

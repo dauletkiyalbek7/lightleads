@@ -18,7 +18,7 @@ import { t } from "@/i18n";
 import { formatDate } from "@/lib/dates";
 import { formatInt } from "@/lib/format";
 import { sinceLabel } from "@/lib/labels";
-import { metaWebhookInfo } from "@/lib/meta-leads-api";
+import { metaWebhookInfo, type MetaAppSettings } from "@/lib/meta-leads-api";
 import { callTeam, openProject, type OverviewPerson, type OverviewProject, type PlatformOverview } from "@/lib/team-api";
 import type { Credentials, SessionUser } from "@/lib/types";
 
@@ -494,10 +494,10 @@ function AddMember({ workspaceId, onAdded, onCredentials }: { workspaceId: strin
   );
 }
 
-/** Адрес и проверочная строка вебхука: владелец платформы один раз вписывает их в приложении Meta. */
+/** Что владелец платформы один раз вписывает в приложении Meta: вебхук, политика, удаление данных. */
 function MetaWebhook() {
   const s = t.admin;
-  const [info, setInfo] = useState<{ callbackUrl: string; verifyToken: string } | null>(null);
+  const [info, setInfo] = useState<MetaAppSettings | null>(null);
   useEffect(() => {
     void metaWebhookInfo().then((result) => result.ok && setInfo(result.data));
   }, []);
@@ -507,6 +507,9 @@ function MetaWebhook() {
       <div className="space-y-3">
         <CopyBlock text={info.callbackUrl} label={s.webhookUrl} multiline />
         <CopyBlock text={info.verifyToken} label={s.webhookToken} />
+        <p className="pt-2 text-sm text-muted-foreground">{s.appLinksText}</p>
+        <CopyBlock text={info.privacyUrl} label={s.privacyUrl} multiline />
+        <CopyBlock text={info.deletionUrl} label={s.deletionUrl} multiline />
       </div>
     </Section>
   );

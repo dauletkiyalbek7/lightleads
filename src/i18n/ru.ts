@@ -852,6 +852,9 @@ export const ru = {
     webhookText: "Нужен, чтобы лиды из лид-форм и WhatsApp приходили сразу. Эти два значения вписываются в приложении Meta, в разделе Webhooks: для объекта Page (поле leadgen) и для объекта WhatsApp Business Account (поле messages).",
     webhookUrl: "Callback URL",
     webhookToken: "Verify token",
+    appLinksText: "Ещё два адреса — в «Настройки приложения → Основное»: политика конфиденциальности и обработка запросов на удаление данных.",
+    privacyUrl: "Privacy Policy URL",
+    deletionUrl: "Data Deletion Callback URL",
   },
   projects: {
     newTitle: "Новый проект",
@@ -860,6 +863,68 @@ export const ru = {
     namePlaceholder: "Например, Aroma House",
     create: "Создать",
     created: "Проект создан",
+  },
+  legal: {
+    privacyTitle: "Политика конфиденциальности",
+    deletionTitle: "Удаление данных",
+    updated: (date: string) => `Редакция от ${date}`,
+    back: "На главную",
+    operator: "Оператор данных",
+    contact: "Почта для вопросов и запросов",
+    contactsMissing: "Контакты оператора будут указаны здесь.",
+    englishTitle: "English version",
+    links: { privacy: "Политика конфиденциальности", deletion: "Удаление данных" },
+    privacy: [
+      {
+        title: "Что такое LightLeads",
+        text: [
+          "LightLeads — сервис аналитики рекламы для бизнеса. Он показывает, какие рекламные кампании, объявления и креативы в Meta (Facebook и Instagram) приносят заявки и продажи. Сервис только читает данные рекламы и ничего в рекламных кабинетах не меняет.",
+          "Доступ к сервису выдаётся по приглашению. Данные каждого проекта видят только его участники.",
+        ],
+      },
+      {
+        title: "Какие данные мы получаем",
+        text: [
+          "Данные аккаунта: имя и адрес почты человека, которому выдан доступ.",
+          "Данные из Meta, к которым пользователь сам дал доступ при входе через Facebook: имя и идентификатор его профиля Facebook, список рекламных кабинетов, кампании, группы объявлений, объявления, статистика показов и расходов, превью креативов. Ключ доступа к Facebook хранится на сервере в зашифрованном виде и никогда не передаётся в браузер.",
+          "Заявки из лид-форм Meta на страницах, которые подключил пользователь: ответы на вопросы формы (обычно имя и телефон), время заявки и объявление, с которого она пришла.",
+          "Сообщения WhatsApp на номера, подключённые к WhatsApp Cloud API: только номер и имя профиля клиента, который написал после нажатия на рекламу, и сведения об этом объявлении. Текст переписки не сохраняется.",
+          "Заявки с сайтов клиентов: телефон, имя и метки рекламы (UTM). Продажи, которые вносят сотрудники: телефон клиента, сумма, товар и дата.",
+        ],
+      },
+      {
+        title: "Зачем мы их используем",
+        text: [
+          "Только чтобы показать владельцу проекта отчёты: расход, заявки, продажи, прибыль и окупаемость рекламы, а также связать продажу с объявлением по номеру телефона.",
+          "Мы не продаём данные, не используем их для своей рекламы и не передаём третьим лицам, кроме сервисов, на которых работает LightLeads: Supabase (база данных, серверы в Европейском союзе) и Vercel (размещение сайта).",
+        ],
+      },
+      {
+        title: "Сколько храним",
+        text: [
+          "Данные проекта хранятся, пока существует проект. Когда пользователь отключает Meta в настройках, ключ доступа удаляется сразу, загруженная статистика остаётся в проекте. При удалении проекта удаляются все его данные.",
+        ],
+      },
+      {
+        title: "Как удалить данные",
+        text: [
+          "Отключить Meta можно в LightLeads: «Настройки → Подключения → Отключить Meta». Также можно удалить приложение LightLeads в настройках Facebook («Настройки и конфиденциальность → Настройки → Приложения и сайты»): мы получим запрос от Meta и удалим ключ доступа и данные вашего профиля Facebook.",
+          "Чтобы удалить остальные данные, напишите нам на почту, указанную ниже. Подробности — на странице «Удаление данных».",
+        ],
+      },
+    ],
+    privacyEn: [
+      "LightLeads is an ad analytics service for businesses. With the user's permission it reads Meta (Facebook and Instagram) ad accounts, campaigns, ads, statistics and creative previews, lead form answers from Pages the user connects, and, for WhatsApp Cloud API numbers the user connects, the phone number and profile name of people who message after clicking an ad (message text is not stored). It never changes ads.",
+      "The data is used only to show the project owner reports on spend, leads, sales and return on ad spend. It is not sold or used for advertising, and is shared only with the services LightLeads runs on (Supabase, servers in the EU, and Vercel). Facebook access tokens are stored encrypted on the server and never sent to the browser.",
+      "To delete your data, disconnect Meta in LightLeads (Settings → Connections), remove the LightLeads app in your Facebook settings (we then delete your access token and Facebook profile data automatically), or email us at the address below.",
+    ],
+    deletionIntro: "Есть три способа удалить данные, которые LightLeads получил из Facebook.",
+    deletionSteps: [
+      "В LightLeads: «Настройки → Подключения → Отключить Meta». Ключ доступа к Facebook удаляется сразу.",
+      "В Facebook: «Настройки и конфиденциальность → Настройки → Приложения и сайты» → LightLeads → «Удалить». Meta сообщит нам об этом, и мы автоматически удалим ключ доступа, имя и идентификатор вашего профиля Facebook.",
+      "Напишите нам на почту ниже, если нужно удалить проект целиком: рекламную статистику, заявки и продажи.",
+    ],
+    deletionStatus: (code: string) => `Запрос на удаление принят, код подтверждения: ${code}. Ключ доступа и данные профиля Facebook удаляются сразу после запроса.`,
   },
   landing: {
     nav: { features: "Возможности", how: "Как это работает", pricing: "Тарифы", login: "Войти", try: "Демо" },

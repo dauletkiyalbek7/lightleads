@@ -16,22 +16,53 @@ const obj = (value: unknown): Json => (value && typeof value === "object" && !Ar
 const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
 const text = (value: unknown): string => (typeof value === "string" || typeof value === "number" ? String(value).trim() : "");
 
+/** «0» и пустая строка вместо ID значат «нет». */
+const idOrNull = (value: unknown): string | null => {
+  const id = text(value);
+  return id && id !== "0" ? id : null;
+};
+
 async function hmacHex(secret: string, message: string): Promise<string> {
   const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(message));
   return Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+const base64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const fromBase64url = (text: string) => atob(text.replace(/-/g, "+").replace(/_/g, "/"));
+
+/** Сравнение строк без раннего выхода: время ответа не подсказывает, сколько символов совпало. */
+function sameText(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+/**
+ * Запрос Meta на удаление данных (Data Deletion Callback): поле signed_request вида «подпись.данные»,
+ * подписанное секретом приложения. Возвращает ID пользователя Facebook или null, если подпись неверна.
+ */
+export async function parseSignedRequest(appSecret: string, signedRequest: string): Promise<string | null> {
+  const [signature, payload] = signedRequest.split(".");
+  if (!appSecret || !signature || !payload) return null;
+  const key = await crypto.subtle.importKey("raw", encoder.encode(appSecret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const expected = base64url(new Uint8Array(await crypto.subtle.sign("HMAC", key, encoder.encode(payload))));
+  if (!sameText(expected, signature)) return null;
+  try {
+    const data = obj(JSON.parse(fromBase64url(payload)));
+    if (text(data.algorithm).toUpperCase() !== "HMAC-SHA256") return null;
+    return idOrNull(data.user_id);
+  } catch {
+    return null;
+  }
+}
+
 /** Подпись уведомления: Meta подписывает тело запроса секретом приложения (заголовок X-Hub-Signature-256). */
 export async function verifySignature(appSecret: string, body: string, header: string | null): Promise<boolean> {
   if (!appSecret || !header?.startsWith(SIGNATURE_PREFIX)) return false;
   const expected = await hmacHex(appSecret, body);
-  const given = header.slice(SIGNATURE_PREFIX.length).toLowerCase();
-  if (given.length !== expected.length) return false;
-  // Сравнение без раннего выхода: время ответа не подсказывает, сколько символов совпало
-  let diff = 0;
-  for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ given.charCodeAt(i);
-  return diff === 0;
+  return sameText(expected, header.slice(SIGNATURE_PREFIX.length).toLowerCase());
 }
 
 /**
@@ -66,12 +97,6 @@ export interface ParsedWebhook {
   forms: FormNotice[];
   clicks: AdClick[];
 }
-
-/** «0» и пустая строка вместо ID значат «нет». */
-const idOrNull = (value: unknown): string | null => {
-  const id = text(value);
-  return id && id !== "0" ? id : null;
-};
 
 function formNotice(value: Json): FormNotice | null {
   const leadId = idOrNull(value.leadgen_id);

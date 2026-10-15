@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { fieldsOf, parseWebhook, verifySignature, verifyToken } from "./webhook.ts";
+import { fieldsOf, parseSignedRequest, parseWebhook, verifySignature, verifyToken } from "./webhook.ts";
 
 const SECRET = "test-app-secret";
 
@@ -106,4 +106,25 @@ Deno.test("ответы формы: первое значение каждого
     ]),
     { full_name: "Айгерим С.", phone_number: "+77011234567", city: "" },
   );
+});
+
+async function signedRequest(data: Record<string, unknown>, secret = SECRET): Promise<string> {
+  const b64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const payload = b64(new TextEncoder().encode(JSON.stringify(data)));
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return `${b64(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload))))}.${payload}`;
+}
+
+Deno.test("запрос на удаление данных: верная подпись даёт ID пользователя", async () => {
+  const request = await signedRequest({ algorithm: "HMAC-SHA256", issued_at: 1760000000, user_id: "218471" });
+  assertEquals(await parseSignedRequest(SECRET, request), "218471");
+});
+
+Deno.test("запрос на удаление данных: чужая подпись, другой алгоритм и мусор отклоняются", async () => {
+  assertEquals(await parseSignedRequest(SECRET, await signedRequest({ algorithm: "HMAC-SHA256", user_id: "1" }, "other")), null);
+  assertEquals(await parseSignedRequest(SECRET, await signedRequest({ algorithm: "plain", user_id: "1" })), null);
+  assertEquals(await parseSignedRequest(SECRET, await signedRequest({ algorithm: "HMAC-SHA256" })), null);
+  assertEquals(await parseSignedRequest(SECRET, "abc"), null);
+  assertEquals(await parseSignedRequest(SECRET, ""), null);
+  assertEquals(await parseSignedRequest("", await signedRequest({ algorithm: "HMAC-SHA256", user_id: "1" })), null);
 });

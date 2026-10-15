@@ -57,6 +57,7 @@
 | Продажи, импорт CSV и Excel | `/sales` |
 | AI-советы и чат | `/ai` |
 | Настройки | `/settings` |
+| Политика конфиденциальности, удаление данных | `/privacy`, `/data-deletion` |
 
 Второй workspace в переключателе (Bilim Academy) пустой — на нём видны пустые состояния.
 
@@ -153,7 +154,11 @@ Supabase, проект `lightleads`. Схема лежит в [supabase/migratio
   `https://<project>.supabase.co/functions/v1/meta-oauth`. Право — `ads_read`.
 - Пока приложение Meta в режиме разработки, подключаются только кабинеты людей с ролью в приложении.
   Для чужих кабинетов нужны Business Verification и App Review (Advanced Access для `ads_read`).
-  Страница политики конфиденциальности и Data Deletion Callback для ревью ещё не сделаны.
+  Для ревью готовы страница политики конфиденциальности `/privacy` и страница `/data-deletion`.
+  Data Deletion Callback принимает функция `meta-leads` (POST с полем `signed_request`, подпись
+  секретом приложения): удаляет ключ доступа, имя и ID профиля Facebook и отвечает ссылкой на
+  `/data-deletion?code=…`. Название оператора и почта для политики задаются в `LEGAL`
+  ([src/lib/config.ts](src/lib/config.ts)); пока они пустые, на проверку Meta не подавать.
 
 #### TikTok
 
