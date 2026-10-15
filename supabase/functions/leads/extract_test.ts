@@ -87,3 +87,10 @@ Deno.test("дата заявки: поддерживаемые виды и му�
   assertEquals(parseLeadDate("10/15/2026"), null);
   assertEquals(parseLeadDate("2026-13-45 99:99"), null);
 });
+
+Deno.test("Tilda: метки из cookie TILDAUTM, если их нет в полях формы", () => {
+  const cookie = "_ga=GA1.1.1; TILDAUTM=" + encodeURIComponent("utm_source=facebook|||utm_medium=paid|||utm_content=120210000000001|||utm_term={{adset.id}}|||") + "; tildauid=1";
+  const body = parseBody(`Name=Ali&Phone=87011234567&utm_source=instagram&COOKIES=${encodeURIComponent(cookie)}`, "application/x-www-form-urlencoded");
+  const lead = extractLead(body, "KZ");
+  assertEquals(lead.utm, { utm_source: "instagram", utm_medium: "paid", utm_content: "120210000000001" });
+});

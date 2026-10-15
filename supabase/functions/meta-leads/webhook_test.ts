@@ -42,14 +42,14 @@ Deno.test("лид-форма: уведомление с объявлением �
       },
     ],
   });
-  assertEquals(parsed.clicks, []);
+  assertEquals(parsed.messages, []);
   assertEquals(parsed.forms, [
     { leadId: "9001", pageId: "111", formId: "501", adId: "120210000000001" },
     { leadId: "9002", pageId: "111", formId: "501", adId: null },
   ]);
 });
 
-Deno.test("WhatsApp: лидом считается только сообщение с объявления", () => {
+Deno.test("WhatsApp: каждое сообщение клиента, объявление — только у перехода с рекламы", () => {
   const message = (id: string, extra: Record<string, unknown>) => ({ from: "77011234567", id, timestamp: "1760000000", type: "text", text: { body: "Здравствуйте" }, ...extra });
   const parsed = parseWebhook({
     object: "whatsapp_business_account",
@@ -67,6 +67,10 @@ Deno.test("WhatsApp: лидом считается только сообщени
                 message("wamid.A", { referral: { source_type: "ad", source_id: "120210000000001", source_url: "https://fb.me/x", headline: "Скидка", ctwa_clid: "clid1", body: "текст" } }),
                 message("wamid.B", {}),
                 message("wamid.C", { referral: { source_type: "post", source_id: "777" } }),
+                message("wamid.D", { type: "image", text: undefined, image: { id: "m1", caption: "вот такой" } }),
+                message("wamid.E", { type: "audio", text: undefined, audio: { id: "m2" } }),
+                message("wamid.F", { type: "reaction", text: undefined, reaction: { emoji: "👍" } }),
+                message("wamid.G", { type: "button", text: undefined, button: { text: "Хочу записаться" } }),
               ],
             },
           },
@@ -77,23 +81,26 @@ Deno.test("WhatsApp: лидом считается только сообщени
     ],
   });
   assertEquals(parsed.forms, []);
-  assertEquals(parsed.clicks, [
+  const base = { numberId: "555", from: "77011234567", name: "Айгерим", sentAt: "2025-10-09T08:53:20.000Z", adId: null, referral: {} };
+  assertEquals(parsed.messages, [
     {
-      numberId: "555",
+      ...base,
       messageId: "wamid.A",
-      from: "77011234567",
-      name: "Айгерим",
       adId: "120210000000001",
-      sentAt: "2025-10-09T08:53:20.000Z",
       text: "Здравствуйте",
       referral: { source_id: "120210000000001", source_url: "https://fb.me/x", headline: "Скидка", ctwa_clid: "clid1" },
     },
+    { ...base, messageId: "wamid.B", text: "Здравствуйте" },
+    { ...base, messageId: "wamid.C", text: "Здравствуйте", referral: { source_id: "777" } },
+    { ...base, messageId: "wamid.D", text: "📷 Фото: вот такой" },
+    { ...base, messageId: "wamid.E", text: "🎤 Голосовое сообщение" },
+    { ...base, messageId: "wamid.G", text: "Хочу записаться" },
   ]);
 });
 
 Deno.test("мусор вместо уведомления не ломает разбор", () => {
   for (const payload of [null, "text", [], {}, { object: "page", entry: "x" }, { object: "page", entry: [{ changes: [null, 5] }] }]) {
-    assertEquals(parseWebhook(payload), { forms: [], clicks: [] });
+    assertEquals(parseWebhook(payload), { forms: [], messages: [] });
   }
 });
 

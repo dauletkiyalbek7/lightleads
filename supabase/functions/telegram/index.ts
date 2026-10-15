@@ -1,17 +1,20 @@
-// Edge Function `telegram`: бот LightLeads присылает новые заявки проекта в Telegram.
-//   POST + X-Telegram-Bot-Api-Secret-Token — обновление от Telegram: «/start КОД» подключает чат к проекту
+// Edge Function `telegram`: бот LightLeads присылает новые заявки проекта в Telegram
+// и передаёт клиентам WhatsApp ответы менеджеров.
+//   POST + X-Telegram-Bot-Api-Secret-Token — обновление от Telegram: «/start КОД» подключает чат к проекту,
+//                                           ответ на сообщение клиента WhatsApp уходит этому клиенту
 //   POST {action:"cron"} + x-cron-secret   — раз в минуту, когда есть очередь: отправить новые заявки
 //   POST {action} + JWT                    — участник проекта: ссылка на бота, список чатов, проверка, отключение
 //   GET                                    — настроен ли бот (без раскрытия токена)
 // Токен бота (TELEGRAM_BOT_TOKEN) владелец платформы задаёт в секретах Edge Functions.
+// Сообщения клиентов WhatsApp в Telegram присылает функция `meta-leads`.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { admin, ALLOWED_ORIGINS, type Caller, CORS, getCaller, HttpError, json, requireMember, SUPABASE_URL } from "../_shared/core.ts";
-import { type LeadNotice, leadMessage, type OutgoingMessage, parseStart, sameText, summaryMessage, testMessage, webhookSecret } from "./message.ts";
+import { admin, type Caller, connectionToken, CORS, getCaller, HttpError, json, requireMember, SUPABASE_URL } from "../_shared/core.ts";
+import { GRAPH_URL } from "../meta-oauth/lib.ts";
+import { APP_URL, BOT_TOKEN, broadcast, CHAT_COLUMNS, type ChatRow, errorText, leadNotices, reply, tg, workspaceName } from "./bot.ts";
+import { leadMessage, parseStart, sameText, summaryMessage, testMessage, webhookSecret } from "./message.ts";
+import { whatsappProblem } from "./whatsapp.ts";
 
-const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") ?? "";
-const API_URL = `https://api.telegram.org/bot${BOT_TOKEN}`;
 const WEBHOOK_URL = `${SUPABASE_URL}/functions/v1/telegram`;
-const APP_URL = ALLOWED_ORIGINS[0];
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
 const CODE_TTL_MS = 30 * MINUTE_MS;
@@ -21,51 +24,15 @@ const MAX_CHATS = 10;
 const MAX_QUEUE = 500;
 /** Больше стольких заявок проекта сразу — одно сообщение-сводка, иначе Telegram ограничит отправку. */
 const SUMMARY_AFTER = 5;
-const MAX_ERROR_LENGTH = 300;
 const MAX_TITLE_LENGTH = 120;
+/** Предел длины текстового сообщения WhatsApp. */
+const MAX_WHATSAPP_TEXT = 4096;
 /** Заявки, которые не удалось отправить за сутки, уже не новость. */
 const STALE_MS = DAY_MS;
 const UPDATES = ["message", "my_chat_member"];
+const SENT_REACTION = "👍";
 
 type Body = Record<string, unknown>;
-
-interface ChatRow {
-  id: string;
-  workspace_id: string;
-  chat_id: number;
-  title: string;
-  kind: "private" | "group";
-  status: "active" | "error";
-  error: string | null;
-  last_sent_at: string | null;
-  created_by: string | null;
-  created_at: string;
-}
-const CHAT_COLUMNS = "id, workspace_id, chat_id, title, kind, status, error, last_sent_at, created_by, created_at";
-
-// ---------- Bot API ----------
-
-class TelegramError extends Error {
-  constructor(public code: number, public description: string, public migrateTo?: number) {
-    super(description);
-  }
-  /** Чат недоступен навсегда: бота удалили, заблокировали или чата нет. */
-  get permanent() {
-    return this.code === 403 || (this.code === 400 && /chat not found|bot was kicked|not a member|blocked/i.test(this.description));
-  }
-}
-
-async function tg<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-  let response: Response;
-  try {
-    response = await fetch(`${API_URL}/${method}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(params) });
-  } catch (error) {
-    throw new TelegramError(0, String(error));
-  }
-  const payload = (await response.json().catch(() => ({}))) as { ok?: boolean; result?: T; description?: string; error_code?: number; parameters?: { migrate_to_chat_id?: number } };
-  if (!payload.ok) throw new TelegramError(payload.error_code ?? response.status, payload.description ?? `HTTP ${response.status}`, payload.parameters?.migrate_to_chat_id);
-  return payload.result as T;
-}
 
 let botName: string | null = null;
 async function botUsername(): Promise<string> {
@@ -78,20 +45,11 @@ async function ensureWebhook() {
   await tg("setWebhook", { url: WEBHOOK_URL, secret_token: await webhookSecret(BOT_TOKEN), allowed_updates: UPDATES });
 }
 
-const send = (chatId: number, message: OutgoingMessage) =>
-  tg("sendMessage", {
-    chat_id: chatId,
-    text: message.text,
-    parse_mode: "HTML",
-    link_preview_options: { is_disabled: true },
-    ...(message.buttons.length ? { reply_markup: { inline_keyboard: message.buttons.map((button) => [button]) } } : {}),
-  });
-
-const reply = (chatId: number, text: string) => send(chatId, { text, buttons: [] }).catch((error) => console.error("telegram reply failed:", String(error)));
-
 function requireBot() {
   if (!BOT_TOKEN) throw new HttpError(503, "not_configured");
 }
+
+const plain = (text: string) => text.replace(/[<>&]/g, "");
 
 // ---------- Обновления от Telegram ----------
 
@@ -104,13 +62,17 @@ interface TgChat {
   username?: string;
 }
 
+interface TgMessage {
+  message_id: number;
+  chat?: TgChat;
+  from?: { is_bot?: boolean };
+  text?: string;
+  migrate_to_chat_id?: number;
+  reply_to_message?: { message_id: number };
+}
+
 const chatTitle = (chat: TgChat) =>
   (chat.title || [chat.first_name, chat.last_name].filter(Boolean).join(" ") || chat.username || "").trim().slice(0, MAX_TITLE_LENGTH) || String(chat.id);
-
-async function workspaceName(workspaceId: string): Promise<string> {
-  const { data } = await admin.from("workspaces").select("name").eq("id", workspaceId).maybeSingle();
-  return data?.name ?? "";
-}
 
 /** «/start КОД» из ссылки в LightLeads: подключаем этот чат к проекту. */
 async function linkChat(chat: TgChat, code: string) {
@@ -131,21 +93,71 @@ async function linkChat(chat: TgChat, code: string) {
   if (error) throw new HttpError(500, "db_error", error.message);
   await admin.from("telegram_link_codes").delete().eq("code", code);
   await admin.from("audit_log").insert({ workspace_id: link.workspace_id, actor_id: link.created_by, action: "telegram.linked", details: { kind: chat.type } });
-  await reply(chat.id, `✅ Готово! Сюда будут приходить новые заявки проекта «${(await workspaceName(link.workspace_id)).replace(/[<>&]/g, "")}».`);
+  await reply(chat.id, `✅ Готово! Сюда будут приходить новые заявки проекта «${plain(await workspaceName(link.workspace_id))}».`);
+}
+
+interface Thread {
+  workspace_id: string;
+  channel_id: string;
+  wa_id: string;
+}
+
+/** Отправляет текст клиенту с номера компании. Возвращает null или понятное объяснение, почему не вышло. */
+async function sendWhatsApp(thread: Thread, text: string): Promise<string | null> {
+  const { data: channel } = await admin.from("lead_channels").select("external_id").eq("id", thread.channel_id).maybeSingle();
+  if (!channel) return "Этот номер WhatsApp уже отключён от проекта в LightLeads.";
+  let token: string;
+  try {
+    token = (await connectionToken(thread.workspace_id, "meta")).token;
+  } catch {
+    return "В проекте не подключена Meta: откройте LightLeads → Настройки → Подключения.";
+  }
+  const response = await fetch(`${GRAPH_URL}/${channel.external_id}/messages`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", to: thread.wa_id, type: "text", text: { body: text.slice(0, MAX_WHATSAPP_TEXT), preview_url: false } }),
+  }).catch(() => null);
+  if (!response) return "Не удалось связаться с WhatsApp. Попробуйте ещё раз через минуту.";
+  const payload = (await response.json().catch(() => ({}))) as { error?: { code?: number; message?: string } };
+  if (response.ok && !payload.error) return null;
+  return whatsappProblem(payload.error?.code ?? response.status, payload.error?.message ?? `HTTP ${response.status}`);
+}
+
+/** Менеджер ответил на сообщение клиента WhatsApp: пересылаем ответ клиенту. */
+async function relayReply(message: TgMessage, chat: TgChat, repliedTo: number) {
+  const { data: thread } = await admin.from("telegram_threads").select("workspace_id, channel_id, wa_id").eq("chat_id", chat.id).eq("message_id", repliedTo).maybeSingle();
+  // Ответ на другое сообщение бота («Готово», сводка заявок) — не переписка с клиентом
+  if (!thread) return;
+  const text = message.text?.trim();
+  if (!text) {
+    await reply(chat.id, "Клиенту в WhatsApp пока можно отправить только текст.", message.message_id);
+    return;
+  }
+  const problem = await sendWhatsApp(thread, text);
+  if (problem) {
+    await reply(chat.id, `⚠️ Не отправлено. ${problem}`, message.message_id);
+    return;
+  }
+  await admin.from("audit_log").insert({ workspace_id: thread.workspace_id, actor_id: null, action: "whatsapp.reply_sent", details: { via: "telegram" } });
+  await tg("setMessageReaction", { chat_id: chat.id, message_id: message.message_id, reaction: [{ type: "emoji", emoji: SENT_REACTION }] }).catch(() =>
+    reply(chat.id, "✅ Отправлено клиенту.", message.message_id),
+  );
 }
 
 async function update(req: Request): Promise<Response> {
   if (!BOT_TOKEN || !sameText(req.headers.get("x-telegram-bot-api-secret-token") ?? "", await webhookSecret(BOT_TOKEN))) throw new HttpError(401, "unauthorized");
   const body = (await req.json().catch(() => ({}))) as {
-    message?: { chat?: TgChat; text?: string; migrate_to_chat_id?: number };
+    message?: TgMessage;
     my_chat_member?: { chat?: TgChat; new_chat_member?: { status?: string } };
   };
   const message = body.message;
-  if (message?.chat) {
+  const chat = message?.chat;
+  if (message && chat) {
     // Группа стала супергруппой: у неё новый ID
-    if (message.migrate_to_chat_id) await admin.from("telegram_chats").update({ chat_id: message.migrate_to_chat_id }).eq("chat_id", message.chat.id);
+    if (message.migrate_to_chat_id) await admin.from("telegram_chats").update({ chat_id: message.migrate_to_chat_id }).eq("chat_id", chat.id);
     const code = typeof message.text === "string" ? parseStart(message.text) : null;
-    if (code !== null) await linkChat(message.chat, code);
+    if (code !== null) await linkChat(chat, code);
+    else if (message.reply_to_message && !message.from?.is_bot) await relayReply(message, chat, message.reply_to_message.message_id);
   }
   // Бота удалили из группы или заблокировали в личке: заявки туда больше не шлём
   const member = body.my_chat_member;
@@ -155,7 +167,7 @@ async function update(req: Request): Promise<Response> {
   return json({ ok: true });
 }
 
-// ---------- Отправка заявок ----------
+// ---------- Отправка заявок из очереди ----------
 
 interface QueueRow {
   lead_id: string;
@@ -163,96 +175,28 @@ interface QueueRow {
   queued_at: string;
 }
 
-interface LeadRow {
-  id: string;
-  name: string;
-  phone: string;
-  source: string;
-  created_at: string;
-  raw_payload: { message?: unknown } | null;
-  ads: { name: string } | null;
-  campaigns: { name: string } | null;
-}
-
-const errorText = (error: unknown) => String(error instanceof TelegramError ? error.description : error).slice(0, MAX_ERROR_LENGTH);
-
-/** Отправка в чат с одной повторной попыткой, если группа сменила ID. */
-async function deliver(chat: ChatRow, message: OutgoingMessage) {
-  try {
-    await send(chat.chat_id, message);
-  } catch (error) {
-    if (!(error instanceof TelegramError) || !error.migrateTo) throw error;
-    await admin.from("telegram_chats").update({ chat_id: error.migrateTo }).eq("chat_id", chat.chat_id);
-    chat.chat_id = error.migrateTo;
-    await send(chat.chat_id, message);
-  }
-}
-
-/**
- * Отправляет сообщения во все чаты проекта. false — временный сбой (лимит Telegram, сеть):
- * заявки остаются в очереди до следующего запуска. Чат, который недоступен навсегда, помечается ошибкой.
- */
-async function broadcast(chats: ChatRow[], message: OutgoingMessage): Promise<boolean> {
-  for (const chat of chats.filter((item) => item.status === "active")) {
-    try {
-      await deliver(chat, message);
-      await admin.from("telegram_chats").update({ last_sent_at: new Date().toISOString(), error: null }).eq("id", chat.id);
-    } catch (error) {
-      if (error instanceof TelegramError && error.permanent) {
-        chat.status = "error";
-        await admin
-          .from("telegram_chats")
-          .update({ status: "error", error: "Бот не может писать в этот чат: его удалили или заблокировали. Подключите чат заново." })
-          .eq("id", chat.id);
-        continue;
-      }
-      console.error("telegram send failed:", errorText(error));
-      return false;
-    }
-  }
-  return true;
-}
-
-function notice(project: string, row: LeadRow): LeadNotice {
-  const message = row.raw_payload?.message;
-  return {
-    project,
-    name: row.name,
-    phone: row.phone,
-    source: row.source,
-    createdAt: row.created_at,
-    adName: row.ads?.name ?? null,
-    campaignName: row.campaigns?.name ?? null,
-    message: typeof message === "string" && message.trim() ? message.trim() : null,
-  };
-}
-
 async function sendWorkspace(workspaceId: string, items: QueueRow[]): Promise<number> {
   const done = async (ids: string[]) => {
     if (ids.length) await admin.from("telegram_queue").delete().in("lead_id", ids);
   };
-  const { data: chats } = await admin.from("telegram_chats").select(CHAT_COLUMNS).eq("workspace_id", workspaceId).eq("status", "active");
-  if (!chats?.length) {
-    await done(items.map((item) => item.lead_id));
+  const all = items.map((item) => item.lead_id);
+  const { data } = await admin.from("telegram_chats").select(CHAT_COLUMNS).eq("workspace_id", workspaceId).eq("status", "active");
+  const chats = (data ?? []) as ChatRow[];
+  if (!chats.length) {
+    await done(all);
     return 0;
   }
-  const { data: rows } = await admin
-    .from("leads")
-    .select("id, name, phone, source, created_at, raw_payload, ads(name), campaigns(name)")
-    .in("id", items.map((item) => item.lead_id))
-    .order("created_at");
-  const project = await workspaceName(workspaceId);
-  const leads = ((rows ?? []) as unknown as LeadRow[]).map((row) => ({ id: row.id, notice: notice(project, row) }));
-  const all = items.map((item) => item.lead_id);
+  const leads = await leadNotices(all);
 
   if (leads.length > SUMMARY_AFTER) {
-    if (await broadcast(chats as ChatRow[], summaryMessage(project, leads.map((lead) => lead.notice), APP_URL))) await done(all);
+    const project = leads[0].notice.project;
+    if ((await broadcast(chats, summaryMessage(project, leads.map((lead) => lead.notice), APP_URL))).ok) await done(all);
     return leads.length;
   }
   let sent = 0;
   const finished = all.filter((id) => !leads.some((lead) => lead.id === id));
   for (const lead of leads) {
-    if (!(await broadcast(chats as ChatRow[], leadMessage(lead.notice, APP_URL)))) break;
+    if (!(await broadcast(chats, leadMessage(lead.notice, APP_URL))).ok) break;
     finished.push(lead.id);
     sent += 1;
   }
@@ -328,7 +272,7 @@ async function chatOf(caller: Caller, body: Body): Promise<ChatRow> {
 async function test(caller: Caller, body: Body) {
   requireBot();
   const chat = await chatOf(caller, body);
-  const ok = await broadcast([{ ...chat, status: "active" }], testMessage(await workspaceName(chat.workspace_id), APP_URL));
+  const { ok } = await broadcast([{ ...chat, status: "active" }], testMessage(await workspaceName(chat.workspace_id), APP_URL));
   const { data } = await admin.from("telegram_chats").select("status").eq("id", chat.id).maybeSingle();
   if (!ok || data?.status === "error") throw new HttpError(502, "send_failed");
   // Проверка прошла: чат снова в работе
@@ -345,7 +289,7 @@ async function unlink(caller: Caller, body: Body) {
   }
   await admin.from("telegram_chats").delete().eq("id", chat.id);
   await admin.from("audit_log").insert({ workspace_id: chat.workspace_id, actor_id: caller.id, action: "telegram.unlinked", details: { kind: chat.kind } });
-  if (BOT_TOKEN) await reply(chat.chat_id, `Заявки проекта «${(await workspaceName(chat.workspace_id)).replace(/[<>&]/g, "")}» больше не приходят в этот чат.`);
+  if (BOT_TOKEN) await reply(chat.chat_id, `Заявки проекта «${plain(await workspaceName(chat.workspace_id))}» больше не приходят в этот чат.`);
   return { ok: true };
 }
 

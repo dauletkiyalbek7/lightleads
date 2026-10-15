@@ -82,24 +82,52 @@ export interface FormNotice {
   adId: string | null;
 }
 
-/** Первое сообщение клиента, который нажал на объявление «Написать в WhatsApp». */
-export interface AdClick {
+/** Входящее сообщение клиента на номер компании в WhatsApp. */
+export interface IncomingMessage {
   /** ID номера WhatsApp компании, на который написали. */
   numberId: string;
   messageId: string;
   /** Номер клиента: только цифры, с кодом страны. */
   from: string;
   name: string;
-  adId: string;
+  /** ID объявления, если клиент написал, нажав на рекламу «Написать в WhatsApp»; иначе null. */
+  adId: string | null;
   sentAt: string;
-  /** Текст сообщения; "" — клиент прислал не текст (фото, голосовое). */
+  /** Текст сообщения или подпись к вложению: «📷 Фото», «🎤 Голосовое сообщение». */
   text: string;
   referral: Record<string, string>;
 }
 
 export interface ParsedWebhook {
   forms: FormNotice[];
-  clicks: AdClick[];
+  messages: IncomingMessage[];
+}
+
+/** Как показать сообщение без текста. */
+const MEDIA_LABELS: Record<string, string> = {
+  image: "📷 Фото",
+  video: "🎬 Видео",
+  audio: "🎤 Голосовое сообщение",
+  voice: "🎤 Голосовое сообщение",
+  document: "📄 Документ",
+  sticker: "Стикер",
+  location: "📍 Геопозиция",
+  contacts: "👤 Контакт",
+  reaction: "Реакция",
+};
+
+/** Текст сообщения любого вида: обычный текст, нажатая кнопка, подпись к фото или название вложения. */
+function messageText(message: Json): string {
+  const type = text(message.type);
+  const body =
+    text(obj(message.text).body) ||
+    text(obj(message.button).text) ||
+    text(obj(obj(message.interactive).button_reply).title) ||
+    text(obj(obj(message.interactive).list_reply).title) ||
+    text(obj(message[type]).caption);
+  const label = MEDIA_LABELS[type] ?? "";
+  const combined = body && label ? `${label}: ${body}` : body || label || (type ? `Сообщение (${type})` : "");
+  return combined.slice(0, MAX_TEXT_LENGTH);
 }
 
 function formNotice(value: Json): FormNotice | null {
@@ -109,37 +137,37 @@ function formNotice(value: Json): FormNotice | null {
   return { leadId, pageId, formId: idOrNull(value.form_id), adId: idOrNull(value.ad_id) };
 }
 
-function adClicks(value: Json): AdClick[] {
+function incoming(value: Json): IncomingMessage[] {
   const numberId = text(obj(value.metadata).phone_number_id);
   if (!numberId) return [];
   const names = new Map(list(value.contacts).map((contact) => [text(obj(contact).wa_id), text(obj(obj(contact).profile).name)]));
-  const clicks: AdClick[] = [];
+  const messages: IncomingMessage[] = [];
   for (const item of list(value.messages)) {
     const message = obj(item);
     const referral = obj(message.referral);
-    const adId = idOrNull(referral.source_id);
     const from = text(message.from).replace(/\D/g, "");
     const messageId = text(message.id);
-    // Обычные сообщения и переходы с публикаций не считаем: лид — это только нажатие на объявление
-    if (text(referral.source_type) !== AD_SOURCE || !adId || !from || !messageId) continue;
+    // Реакции и служебные сообщения (смена номера, системные) — не переписка
+    if (!from || !messageId || ["reaction", "system", "unsupported"].includes(text(message.type))) continue;
     const sentMs = Number(text(message.timestamp)) * SECOND_MS;
-    clicks.push({
+    messages.push({
       numberId,
       messageId,
       from,
       name: names.get(text(message.from)) ?? "",
-      adId,
+      // Объявление — только для перехода с рекламы, не с обычной публикации
+      adId: text(referral.source_type) === AD_SOURCE ? idOrNull(referral.source_id) : null,
       sentAt: new Date(Number.isFinite(sentMs) && sentMs > 0 ? sentMs : Date.now()).toISOString(),
-      text: text(obj(message.text).body).slice(0, MAX_TEXT_LENGTH),
+      text: messageText(message),
       referral: Object.fromEntries(REFERRAL_KEYS.map((key) => [key, text(referral[key])]).filter(([, v]) => v)),
     });
   }
-  return clicks;
+  return messages;
 }
 
 export function parseWebhook(payload: unknown): ParsedWebhook {
   const root = obj(payload);
-  const parsed: ParsedWebhook = { forms: [], clicks: [] };
+  const parsed: ParsedWebhook = { forms: [], messages: [] };
   for (const entry of list(root.entry)) {
     for (const item of list(obj(entry).changes)) {
       const change = obj(item);
@@ -147,7 +175,7 @@ export function parseWebhook(payload: unknown): ParsedWebhook {
         const notice = formNotice(obj(change.value));
         if (notice) parsed.forms.push(notice);
       } else if (root.object === "whatsapp_business_account" && change.field === "messages") {
-        parsed.clicks.push(...adClicks(obj(change.value)));
+        parsed.messages.push(...incoming(obj(change.value)));
       }
     }
   }

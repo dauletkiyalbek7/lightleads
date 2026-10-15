@@ -6,6 +6,8 @@ const encoder = new TextEncoder();
 /** Часовой пояс времени заявки в сообщении: как на экранах приложения. */
 const TIME_ZONE = "Asia/Almaty";
 const MAX_MESSAGE_LENGTH = 300;
+/** Сообщение клиента в переписке показываем целиком, но не длиннее предела Telegram (4096). */
+const MAX_CHAT_TEXT_LENGTH = 3500;
 const MAX_LINE_LENGTH = 80;
 /** Столько заявок перечисляем в сводке; об остальных — только число. */
 export const SUMMARY_LINES = 10;
@@ -85,14 +87,28 @@ export function sameText(a: string, b: string): boolean {
 
 const leadsButton = (appUrl: string): Button => ({ text: "Открыть в LightLeads", url: `${appUrl}/leads` });
 
-export function leadMessage(lead: LeadNotice, appUrl: string): OutgoingMessage {
+/** Под сообщениями клиентов WhatsApp: как ему ответить. */
+export const REPLY_HINT = "↩️ Ответьте на это сообщение — ответ уйдёт клиенту в WhatsApp с номера компании.";
+
+/**
+ * Карточка новой заявки. replyable — клиент написал на номер компании в WhatsApp Cloud API:
+ * отвечают ему ответом на эту карточку, поэтому кнопки «Написать в WhatsApp» с личного номера нет.
+ */
+export function leadMessage(lead: LeadNotice, appUrl: string, replyable = false): OutgoingMessage {
   const lines = [`🔔 <b>Новая заявка</b> · ${escapeHtml(lead.project)}`, "", `<b>${escapeHtml(lead.name || "Без имени")}</b>`, formatPhone(lead.phone)];
   if (lead.message) lines.push(`💬 «${escapeHtml(clip(lead.message, MAX_MESSAGE_LENGTH))}»`);
   lines.push("", `Источник: ${escapeHtml(SOURCE_LABELS[lead.source] ?? lead.source)}`);
   if (lead.adName) lines.push(`Объявление: ${escapeHtml(lead.adName)}`);
   if (lead.campaignName) lines.push(`Кампания: ${escapeHtml(lead.campaignName)}`);
   lines.push(`Время: ${formatTime(lead.createdAt)}`);
+  if (replyable) return { text: [...lines, "", REPLY_HINT].join("\n"), buttons: [leadsButton(appUrl)] };
   return { text: lines.join("\n"), buttons: [{ text: "Написать в WhatsApp", url: whatsappLink(lead.phone) }, leadsButton(appUrl)] };
+}
+
+/** Следующее сообщение клиента в WhatsApp: он уже есть в заявках, поэтому коротко. */
+export function chatMessage(project: string, name: string, phone: string, text: string): OutgoingMessage {
+  const who = `<b>${escapeHtml(name || "Без имени")}</b> · ${formatPhone(phone)} · ${escapeHtml(project)}`;
+  return { text: `💬 ${who}\n${escapeHtml(clip(text, MAX_CHAT_TEXT_LENGTH))}`, buttons: [] };
 }
 
 /** Много заявок сразу (например, загрузили таблицу): одно сообщение вместо десятков. */

@@ -496,6 +496,14 @@ export const ru = {
       webhookTitle: "Вебхук для Tilda, квизов и своего сервера",
       webhookHint: "Отправляйте сюда телефон и UTM-метки POST-запросом: JSON или обычная форма. Поле с телефоном должно называться phone.",
       webhookUrlLabel: "Адрес для Tilda и квизов: ключ уже внутри",
+      tildaTitle: "Как подключить Tilda",
+      tildaSteps: [
+        "Скопируйте адрес выше.",
+        "Tilda → Настройки сайта → Формы → Webhook. Вставьте адрес и нажмите «Добавить». Tilda проверит адрес сама.",
+        "В настройках этого вебхука отметьте «Передавать Cookies»: так в заявку попадут метки рекламы и она привяжется к объявлению.",
+        "Откройте страницу с формой → блок формы → Контент → «Приёмщики данных» → отметьте Webhook. Опубликуйте страницу.",
+        "Отправьте тестовую заявку с сайта: через минуту она появится в «Лидах» и в Telegram.",
+      ],
       keyLabel: "Ключ проекта",
       exampleLabel: "Пример запроса со своего сервера",
       keyLoading: "Загружаем ключ…",
@@ -788,14 +796,14 @@ export const ru = {
     },
     whatsapp: {
       title: "WhatsApp",
-      hint: "Клиент нажал на объявление «Написать в WhatsApp» и отправил сообщение: его номер сохраняется как лид с привязкой к объявлению.",
-      grantText: "Разрешите LightLeads получать входящие сообщения с рекламы на ваши номера WhatsApp Cloud API. Переписку LightLeads не хранит: только номер клиента, его первое сообщение и объявление.",
+      hint: "Каждый новый клиент, который написал на номер компании, становится лидом; с рекламы «Написать в WhatsApp» — с привязкой к объявлению. Сообщения клиентов приходят в Telegram проекта, а ответ на них уходит клиенту с номера компании.",
+      grantText: "Разрешите LightLeads получать входящие сообщения на ваши номера WhatsApp Cloud API и отправлять ответы менеджеров. LightLeads хранит только номер клиента, его первое сообщение и объявление; остальная переписка идёт через Telegram и в LightLeads не сохраняется.",
       choose: "Выбрать номера",
       empty: "Номера пока не выбраны.",
       pickerTitle: "Номера WhatsApp",
       pickerText: "Отметьте номера, на которые ведёт реклама этого проекта.",
       pickerEmpty: "Facebook не показал ни одного номера. Номер должен быть добавлен в WhatsApp Cloud API в вашем Meta Business.",
-      warning: "Работает только с номерами на WhatsApp Cloud API: обычное приложение WhatsApp Business не сообщает, с какого объявления написал клиент. Номер, переведённый на Cloud API напрямую, перестаёт работать в обычном приложении: отвечать клиентам нужно будет через сервис, подключённый к Cloud API.",
+      warning: "Работает только с номерами на WhatsApp Cloud API. Такой номер не открывается в обычном приложении WhatsApp: менеджеры отвечают клиентам в Telegram (вкладка «Telegram»), ответом на сообщение клиента. Писать клиенту первым WhatsApp разрешает только в течение 24 часов после его последнего сообщения.",
     },
     errors: {
       forbidden: "Подключать источники лидов может владелец проекта.",
@@ -811,7 +819,7 @@ export const ru = {
   telegram: {
     title: "Заявки в Telegram",
     hint: "Бот LightLeads присылает каждую новую заявку в Telegram: имя, телефон, источник, объявление и первое сообщение клиента. Подключите группу отдела продаж: руководитель сразу видит заявку и передаёт её менеджеру.",
-    rules: "Присылаем заявки со всех источников, кроме добавленных вручную. Если пришло сразу больше 5 заявок, бот пришлёт одно сообщение со списком.",
+    rules: "Присылаем заявки со всех источников, кроме добавленных вручную. Если пришло сразу больше 5 заявок, бот пришлёт одно сообщение со списком. Если к проекту подключён номер WhatsApp Cloud API, сюда приходят и сообщения клиентов: чтобы ответить, ответьте на сообщение клиента в Telegram (свайп влево или «Ответить»), и бот отправит ответ в WhatsApp.",
     demo: "В демо подключение недоступно. Войдите в свой аккаунт, чтобы получать заявки в Telegram.",
     notConfigured: "Бот ещё не настроен владельцем платформы.",
     loading: "Загружаем…",
@@ -960,7 +968,7 @@ export const ru = {
         text: [
           "Только чтобы показать владельцу проекта отчёты: расход, заявки, продажи, прибыль и окупаемость рекламы, а также связать продажу с объявлением по номеру телефона.",
           "Мы не продаём данные, не используем их для своей рекламы и не передаём третьим лицам, кроме сервисов, на которых работает LightLeads: Supabase (база данных, серверы в Европейском союзе) и Vercel (размещение сайта).",
-          "Если участник проекта сам подключил чат Telegram, бот LightLeads присылает туда новые заявки проекта: имя, телефон, источник, объявление и первое сообщение клиента.",
+          "Если участник проекта сам подключил чат Telegram, бот LightLeads присылает туда новые заявки проекта: имя, телефон, источник, объявление и первое сообщение клиента. Для номеров WhatsApp Cloud API бот пересылает в этот чат сообщения клиентов, а ответы менеджеров из чата — клиентам в WhatsApp. Текст этой переписки LightLeads не хранит: остаются только служебные номера сообщений, чтобы ответ ушёл нужному клиенту.",
         ],
       },
       {
@@ -979,7 +987,7 @@ export const ru = {
     ],
     privacyEn: [
       "LightLeads is an ad analytics service for businesses. With the user's permission it reads Meta (Facebook and Instagram) ad accounts, campaigns, ads, statistics and creative previews, lead form answers from Pages the user connects, and, for WhatsApp Cloud API numbers the user connects, the phone number and profile name of people who message after clicking an ad, with the text of their first message (the rest of the conversation is not stored). It never changes ads.",
-      "The data is used only to show the project owner reports on spend, leads, sales and return on ad spend. It is not sold or used for advertising, and is shared only with the services LightLeads runs on (Supabase, servers in the EU, and Vercel), and with Telegram chats that project members connect themselves to receive new leads. Facebook access tokens are stored encrypted on the server and never sent to the browser.",
+      "The data is used only to show the project owner reports on spend, leads, sales and return on ad spend. It is not sold or used for advertising, and is shared only with the services LightLeads runs on (Supabase, servers in the EU, and Vercel), and with Telegram chats that project members connect themselves to receive new leads. For WhatsApp Cloud API numbers the bot relays customer messages to that chat and managers' replies back to WhatsApp; the conversation text is not stored by LightLeads. Facebook access tokens are stored encrypted on the server and never sent to the browser.",
       "To delete your data, disconnect Meta in LightLeads (Settings → Connections), remove the LightLeads app in your Facebook settings (we then delete your access token and Facebook profile data automatically), or email us at the address below.",
     ],
     deletionIntro: "Есть три способа удалить данные, которые LightLeads получил из Facebook.",

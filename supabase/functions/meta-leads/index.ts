@@ -1,6 +1,7 @@
 // Edge Function `meta-leads`: лиды из Meta — лид-формы страниц Facebook и WhatsApp (Cloud API).
 //   GET  ?hub.mode=subscribe…             — приложение Meta проверяет адрес вебхука
-//   POST + X-Hub-Signature-256            — уведомление Meta: заявка из лид-формы или сообщение WhatsApp с рекламы
+//   POST + X-Hub-Signature-256            — уведомление Meta: заявка из лид-формы или сообщение клиента в WhatsApp
+//                                           (новый клиент — лид; его сообщения уходят в Telegram проекта, ответы — функция `telegram`)
 //   POST {action} + JWT                   — действия владельца: выдать доступ, выбрать страницы и номера
 //   POST {action:"cron"} + x-cron-secret  — раз в час: дочитать пропущенные заявки форм и привязать лиды к новым объявлениям
 //   POST signed_request (форма)           — Meta просит удалить данные человека, удалившего приложение (Data Deletion Callback)
@@ -22,7 +23,9 @@ import {
 } from "../_shared/core.ts";
 import { extractLead, normalizePhone } from "../leads/extract.ts";
 import { DIALOG_URL, GRAPH_URL, graphGet, graphList, META_APP_ID, META_APP_SECRET, META_LOGIN_CONFIG_ID, META_SCOPES } from "../meta-oauth/lib.ts";
-import { type AdClick, fieldsOf, type FormNotice, parseSignedRequest, parseWebhook, verifySignature, verifyToken } from "./webhook.ts";
+import { activeChats, APP_URL, broadcast, leadNotices, rememberThread, workspaceName } from "../telegram/bot.ts";
+import { chatMessage, leadMessage } from "../telegram/message.ts";
+import { fieldsOf, type FormNotice, type IncomingMessage, parseSignedRequest, parseWebhook, verifySignature, verifyToken } from "./webhook.ts";
 
 const SECOND_MS = 1000;
 const HOUR_MS = 60 * 60 * SECOND_MS;
@@ -40,6 +43,8 @@ const MAX_NAME_LENGTH = 120;
 const MAX_ERROR_LENGTH = 300;
 const MAX_CHANNELS = 50;
 const UNIQUE_VIOLATION = "23505";
+/** Клиент, который уже был лидом за столько дней, пишет снова: это продолжение переписки, а не новый лид. */
+const REPEAT_LEAD_DAYS = 30;
 /** Необязательно: конфигурация Facebook Login for Business с правами на страницы, лид-формы и WhatsApp. */
 const LEADS_CONFIG_ID = Deno.env.get("META_LEADS_CONFIG_ID") ?? "";
 const WEBHOOK_URL = `${SUPABASE_URL}/functions/v1/meta-leads`;
@@ -181,32 +186,33 @@ interface NewLead {
   payload: Record<string, unknown>;
 }
 
-/** true — лид добавлен; false — он уже был. */
-async function saveLead(lead: NewLead): Promise<boolean> {
+/** ID нового лида; null — он уже был. */
+async function saveLead(lead: NewLead): Promise<string | null> {
   const { data: existing } = await admin.from("leads").select("id").eq("workspace_id", lead.workspaceId).eq("source", lead.source).eq("external_id", lead.externalId).limit(1);
-  if (existing?.length) return false;
+  if (existing?.length) return null;
 
   let refs: { campaign_id: string | null; adset_id: string | null; ad_id: string | null } = { campaign_id: null, adset_id: null, ad_id: null };
   if (lead.externalAdId) {
     const { data: ads } = await admin.from("ads").select("id, adset_id, campaign_id").eq("workspace_id", lead.workspaceId).eq("external_id", lead.externalAdId).limit(1);
     if (ads?.[0]) refs = { campaign_id: ads[0].campaign_id, adset_id: ads[0].adset_id, ad_id: ads[0].id };
   }
-  const { error } = await admin.from("leads").insert({
+  const { data: created, error } = await admin.from("leads").insert({
     workspace_id: lead.workspaceId,
     phone: lead.phone,
     name: lead.name.slice(0, MAX_NAME_LENGTH),
     source: lead.source,
-    platform: "meta",
+    // Клиент, который написал в WhatsApp не с рекламы, — не заслуга рекламной площадки
+    platform: lead.source === "meta_form" || lead.externalAdId ? "meta" : null,
     ...refs,
     external_id: lead.externalId,
     // Объявление могло ещё не загрузиться из кабинета: по этому ID лид привяжется к нему позже
     external_ad_id: lead.externalAdId,
     created_at: lead.createdAt,
     raw_payload: lead.payload,
-  });
-  if (error?.code === UNIQUE_VIOLATION) return false;
-  if (error) throw new HttpError(500, "db_error", error.message);
-  return true;
+  }).select("id").single();
+  if (error?.code === UNIQUE_VIOLATION) return null;
+  if (error || !created) throw new HttpError(500, "db_error", error?.message);
+  return created.id;
 }
 
 type Saved = "saved" | "duplicate" | "no_phone";
@@ -263,23 +269,52 @@ async function handleForm(notice: FormNotice) {
   });
 }
 
-async function handleClick(click: AdClick) {
-  const channel = await findChannel("whatsapp", click.numberId);
+/**
+ * Сообщение клиента в Telegram проекта: новая заявка — карточкой, дальше — короткими сообщениями.
+ * Ответ менеджера на любое из них уйдёт этому клиенту (функция `telegram`). Сбой Telegram заявку не теряет.
+ */
+async function forwardToTelegram(channel: Channel, message: IncomingMessage, phone: string, leadId: string | null) {
+  try {
+    const chats = await activeChats(channel.workspace_id);
+    if (!chats.length) return;
+    const lead = leadId ? (await leadNotices([leadId]))[0] : undefined;
+    const outgoing = lead ? leadMessage(lead.notice, APP_URL, true) : chatMessage(await workspaceName(channel.workspace_id), message.name, phone, message.text);
+    const { sent } = await broadcast(chats, outgoing);
+    await rememberThread(channel.workspace_id, channel.id, message.from, sent);
+  } catch (error) {
+    console.error("meta-leads telegram failed:", errorText(error));
+  }
+}
+
+/** Новый клиент или переход с рекламы — лид; клиент, который уже был лидом недавно, продолжает переписку. */
+async function handleMessage(message: IncomingMessage) {
+  const channel = await findChannel("whatsapp", message.numberId);
   if (!channel) return;
+  // Meta может прислать то же сообщение повторно: в Telegram оно должно попасть один раз
+  const { error: seen } = await admin.from("whatsapp_seen").insert({ message_id: message.messageId, workspace_id: channel.workspace_id });
+  if (seen?.code === UNIQUE_VIOLATION) return;
+  if (seen) throw new HttpError(500, "db_error", seen.message);
+
   await guarded(channel, async () => {
-    const phone = normalizePhone(`+${click.from}`, await defaultCountry(channel.workspace_id));
+    const phone = normalizePhone(`+${message.from}`, await defaultCountry(channel.workspace_id));
     if (!phone) return;
-    const saved = await saveLead({
-      workspaceId: channel.workspace_id,
-      source: "whatsapp",
-      phone,
-      name: click.name,
-      externalId: click.messageId,
-      externalAdId: click.adId,
-      createdAt: click.sentAt,
-      payload: { phone_number_id: click.numberId, referral: click.referral, ...(click.text ? { message: click.text } : {}) },
-    });
-    await mark(channel, { saved });
+    const since = new Date(Date.now() - REPEAT_LEAD_DAYS * DAY_MS).toISOString();
+    const { count } = await admin.from("leads").select("id", { count: "exact", head: true }).eq("workspace_id", channel.workspace_id).eq("phone", phone).gte("created_at", since);
+    let leadId: string | null = null;
+    if (message.adId || !count) {
+      leadId = await saveLead({
+        workspaceId: channel.workspace_id,
+        source: "whatsapp",
+        phone,
+        name: message.name,
+        externalId: message.messageId,
+        externalAdId: message.adId,
+        createdAt: message.sentAt,
+        payload: { phone_number_id: message.numberId, referral: message.referral, ...(message.text ? { message: message.text } : {}) },
+      });
+      await mark(channel, { saved: Boolean(leadId) });
+    }
+    await forwardToTelegram(channel, message, phone, leadId);
   });
 }
 
@@ -292,9 +327,9 @@ async function webhook(req: Request): Promise<Response> {
   } catch {
     /* не JSON: разбор вернёт пустой список */
   }
-  const { forms, clicks } = parseWebhook(payload);
+  const { forms, messages } = parseWebhook(payload);
   for (const notice of forms) await handleForm(notice);
-  for (const click of clicks) await handleClick(click);
+  for (const message of messages) await handleMessage(message);
   return json({ ok: true });
 }
 

@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { escapeHtml, formatTime, leadMessage, type LeadNotice, parseStart, sameText, SUMMARY_LINES, summaryMessage, webhookSecret, whatsappLink } from "./message.ts";
+import { chatMessage, escapeHtml, formatTime, leadMessage, REPLY_HINT, type LeadNotice, parseStart, sameText, SUMMARY_LINES, summaryMessage, webhookSecret, whatsappLink } from "./message.ts";
 
 const APP = "https://app.example";
 const lead = (extra: Partial<LeadNotice> = {}): LeadNotice => ({
@@ -72,4 +72,23 @@ Deno.test("вспомогательные: экранирование, ссыл�
   assert(sameText("abc", "abc"));
   assert(!sameText("abc", "abd"));
   assert(!sameText("abc", "ab"));
+});
+
+Deno.test("заявка с номера WhatsApp Cloud API: подсказка ответа вместо кнопки WhatsApp", () => {
+  const { text, buttons } = leadMessage(lead(), APP, true);
+  assert(text.endsWith(REPLY_HINT));
+  assertEquals(buttons, [{ text: "Открыть в LightLeads", url: `${APP}/leads` }]);
+});
+
+Deno.test("сообщение из переписки: кто написал и текст без HTML", () => {
+  const { text, buttons } = chatMessage("Bilim", "Дана", "+77011234567", "Цена <b>?</b>");
+  assertEquals(text, "💬 <b>Дана</b> · +7 701 123 4567 · Bilim\nЦена &lt;b&gt;?&lt;/b&gt;");
+  assertEquals(buttons, []);
+});
+
+Deno.test("ошибки WhatsApp: известные коды понятным текстом, остальные — как ответила Meta", async () => {
+  const { whatsappProblem } = await import("./whatsapp.ts");
+  assert(whatsappProblem(131047, "Re-engagement message").includes("24 часов"));
+  assert(whatsappProblem(190, "Session expired").includes("Переподключите Meta"));
+  assertEquals(whatsappProblem(1, "Unknown"), "WhatsApp ответил: Unknown");
 });

@@ -213,6 +213,12 @@ function LeadSources() {
               <CopyBlock text={key} label={s.keyLabel} />
               <CopyBlock text={ingestExample(origin, key)} label={s.exampleLabel} multiline />
             </div>
+            <p className="mt-5 text-sm font-semibold">{s.tildaTitle}</p>
+            <ol className="mt-2 list-decimal space-y-2 pl-5 text-sm leading-relaxed">
+              {s.tildaSteps.map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ol>
           </Section>
           <Section title={s.sheetsTitle} hint={s.sheetsHint}>
             <ol className="mb-4 list-decimal space-y-2 pl-5 text-sm leading-relaxed">

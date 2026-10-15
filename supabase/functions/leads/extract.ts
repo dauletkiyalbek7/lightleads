@@ -32,6 +32,7 @@ const MAX_VALUE_LENGTH = 500;
 const MIN_PHONE_DIGITS = 7;
 /** Макрос платформы, который не подставился: «{{ad.id}}» или «__CID__». Такое значение бесполезно. */
 const RAW_MACRO_RE = /\{\{.*\}\}|^__[A-Z_]+__$/;
+const TILDA_UTM_RE = /(?:^|;\s*)TILDAUTM=([^;]*)/;
 
 export interface ExtractedLead {
   /** Телефон в E.164 или null, если номер не найден либо невалиден. */
@@ -91,7 +92,39 @@ function utmOf(fields: Map<string, string>): Utm {
       }
     }
   }
+  // Чего нет в полях формы, берём из cookie Tilda
+  for (const [key, value] of tildaUtm(fields)) {
+    if (!utm[key] && value && !RAW_MACRO_RE.test(value)) utm[key] = value;
+  }
   return utm;
+}
+
+/**
+ * Tilda с включённой галочкой «Передавать Cookies» присылает поле COOKIES, где в cookie TILDAUTM
+ * лежат метки посетителя: «utm_source=facebook|||utm_content=1202…» (закодировано для адреса).
+ */
+function tildaUtm(fields: Map<string, string>): Map<(typeof UTM_KEYS)[number], string> {
+  const found = new Map<(typeof UTM_KEYS)[number], string>();
+  for (const value of fields.values()) {
+    const match = TILDA_UTM_RE.exec(value);
+    if (!match) continue;
+    let raw = match[1];
+    // Значение бывает закодировано дважды: само cookie и строка внутри него
+    for (let i = 0; i < 2; i++) {
+      try {
+        raw = decodeURIComponent(raw);
+      } catch {
+        break;
+      }
+    }
+    for (const pair of raw.split("|||")) {
+      const [key, ...rest] = pair.split("=");
+      const name = key.trim().toLowerCase() as (typeof UTM_KEYS)[number];
+      if ((UTM_KEYS as readonly string[]).includes(name)) found.set(name, rest.join("=").trim().slice(0, MAX_VALUE_LENGTH));
+    }
+    break;
+  }
+  return found;
 }
 
 const pad = (value: string | undefined) => (value ?? "0").padStart(2, "0");
