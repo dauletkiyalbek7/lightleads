@@ -9,6 +9,7 @@ import { z } from "zod";
 import { CredentialsDialog } from "@/components/features/credentials-dialog";
 import { AdPlatformConnection } from "@/components/features/ad-connect";
 import { MetaLeadChannels } from "@/components/features/meta-lead-channels";
+import { TelegramLeads } from "@/components/features/telegram-leads";
 import { WorkspaceAvatar } from "@/components/shell/workspace-switcher";
 import { PlatformIcon } from "@/components/kit/brand";
 import { Btn } from "@/components/kit/btn";
@@ -26,7 +27,7 @@ import { rateOn } from "@/lib/currency";
 import { addDays, formatDate } from "@/lib/dates";
 import { CURRENCY_SYMBOL, formatMoney, formatNumber } from "@/lib/format";
 import { OAUTH_RETURN_KEY } from "@/lib/meta-leads-api";
-import { DEMO_WORKSPACE_KEY, ingestExample, ingestUrlWithKey, siteSnippet, UTM_TEMPLATES } from "@/lib/snippets";
+import { DEMO_WORKSPACE_KEY, ingestExample, ingestUrlWithKey, sheetsScript, siteSnippet, UTM_TEMPLATES } from "@/lib/snippets";
 import { useApp } from "@/lib/store";
 import { THEME_SWATCH, THEMES } from "@/lib/theme";
 import type { Credentials } from "@/lib/types";
@@ -211,6 +212,19 @@ function LeadSources() {
               <CopyBlock text={ingestUrlWithKey(origin, key)} label={s.webhookUrlLabel} multiline />
               <CopyBlock text={key} label={s.keyLabel} />
               <CopyBlock text={ingestExample(origin, key)} label={s.exampleLabel} multiline />
+            </div>
+          </Section>
+          <Section title={s.sheetsTitle} hint={s.sheetsHint}>
+            <ol className="mb-4 list-decimal space-y-2 pl-5 text-sm leading-relaxed">
+              {s.sheetsSteps.map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ol>
+            <CopyBlock text={sheetsScript(origin, key)} label={s.sheetsScript} multiline tall />
+            <div className="mt-4 space-y-2 text-sm leading-relaxed text-muted-foreground">
+              <p>{s.sheetsColumns}</p>
+              <p>{s.sheetsHistory}</p>
+              <p>{s.sheetsOtherSheet}</p>
             </div>
           </Section>
         </>
@@ -653,6 +667,7 @@ const ERROR_TOAST_MS = 60_000;
 const PANELS: Record<Tab, () => ReactNode> = {
   connections: Connections,
   leadSources: LeadSources,
+  telegram: TelegramLeads,
   attribution: Attribution,
   currency: CurrencySettings,
   products: Products,

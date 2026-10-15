@@ -85,6 +85,7 @@ Deno.test("WhatsApp: лидом считается только сообщени
       name: "Айгерим",
       adId: "120210000000001",
       sentAt: "2025-10-09T08:53:20.000Z",
+      text: "Здравствуйте",
       referral: { source_id: "120210000000001", source_url: "https://fb.me/x", headline: "Скидка", ctwa_clid: "clid1" },
     },
   ]);

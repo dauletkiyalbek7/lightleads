@@ -18,3 +18,6 @@ export function formatPhone(e164: string): string {
 export function formatPhoneInput(input: string, country: CountryCode = DEFAULT_COUNTRY): string {
   return new AsYouType(country).input(input);
 }
+
+/** Ссылка, которая открывает переписку с клиентом в WhatsApp: на телефоне — в приложении, на компьютере — в WhatsApp Web. */
+export const whatsappLink = (e164: string) => `https://wa.me/${e164.replace(/\D/g, "")}`;

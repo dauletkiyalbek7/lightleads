@@ -133,7 +133,8 @@ export type LeadSource =
   | "website"
   | "whatsapp"
   | "instagram"
-  | "manual";
+  | "manual"
+  | "sheet";
 
 export interface Lead {
   id: string;
@@ -147,6 +148,8 @@ export interface Lead {
   adId: string | null;
   date: string;
   time: string;
+  /** Первое сообщение клиента в WhatsApp. */
+  message?: string | null;
 }
 
 export interface Product {

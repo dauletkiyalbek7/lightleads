@@ -1,6 +1,6 @@
 "use client";
 
-import { ClipboardList, Globe, Hand, MessageCircle, Plus, Send, Trash2, type LucideIcon } from "lucide-react";
+import { ClipboardList, FileSpreadsheet, Globe, Hand, MessageCircle, Plus, Send, Trash2, type LucideIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { LeadDialog } from "@/components/features/lead-dialog";
@@ -14,18 +14,19 @@ import { EmptyState, PageSkeleton } from "@/components/kit/states";
 import { Surface } from "@/components/kit/surface";
 import { plural, t } from "@/i18n";
 import { formatDayShort, inRange } from "@/lib/dates";
-import { formatPhone } from "@/lib/phone";
+import { formatPhone, whatsappLink } from "@/lib/phone";
 import { useApp } from "@/lib/store";
 import type { Lead, LeadSource } from "@/lib/types";
 
 type StatusFilter = "all" | "sold" | "open";
 const PAGE_SIZE = 40;
 const LEAD_SOURCES_HREF = "/settings?tab=leadSources";
-const SOURCES: LeadSource[] = ["meta_form", "tiktok_form", "website", "whatsapp", "instagram", "manual"];
+const SOURCES: LeadSource[] = ["meta_form", "tiktok_form", "website", "sheet", "whatsapp", "instagram", "manual"];
 const SOURCE_ICON: Record<LeadSource, LucideIcon> = {
   meta_form: ClipboardList,
   tiktok_form: ClipboardList,
   website: Globe,
+  sheet: FileSpreadsheet,
   whatsapp: MessageCircle,
   instagram: Send,
   manual: Hand,
@@ -39,6 +40,28 @@ function SourceLabel({ lead }: { lead: Lead }) {
       {t.leads.sources[lead.source]}
     </span>
   );
+}
+
+/** Открыть переписку с клиентом в WhatsApp на своём телефоне или в WhatsApp Web. */
+function WhatsAppButton({ lead }: { lead: Lead }) {
+  return (
+    <a
+      href={whatsappLink(lead.phone)}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={t.leads.writeWhatsApp}
+      title={t.leads.writeWhatsApp}
+      className="inline-flex size-9 shrink-0 items-center justify-center rounded-xl text-success outline-none transition-colors hover:bg-success/10 focus-visible:ring-4 focus-visible:ring-brand/25"
+    >
+      <MessageCircle className="size-4" />
+    </a>
+  );
+}
+
+/** Первое сообщение клиента в WhatsApp: с ним менеджеру проще начать разговор. */
+function LeadMessage({ lead, className }: { lead: Lead; className?: string }) {
+  if (!lead.message) return null;
+  return <p className={className}>«{lead.message}»</p>;
 }
 
 export default function LeadsPage() {
@@ -65,7 +88,7 @@ export default function LeadsPage() {
       if (status === "sold" && !sold) return false;
       if (status === "open" && sold) return false;
       if (!q) return true;
-      return (digits.length > 2 && l.phone.includes(digits)) || l.name.toLowerCase().includes(q);
+      return (digits.length > 2 && l.phone.includes(digits)) || l.name.toLowerCase().includes(q) || Boolean(l.message?.toLowerCase().includes(q));
     });
   }, [ds.leads, range, source, status, query, soldPhones]);
 
@@ -183,7 +206,7 @@ export default function LeadsPage() {
                   <th className="px-4 py-3.5 text-left font-medium">{t.leads.source}</th>
                   <th className="hidden px-4 py-3.5 text-left font-medium lg:table-cell">{t.leads.ad}</th>
                   <th className="px-4 py-3.5 text-right font-medium">{t.leads.status}</th>
-                  <th className="w-12 py-3.5 pr-3" aria-label={t.common.remove} />
+                  <th className="w-24 py-3.5 pr-3" aria-label={t.common.remove} />
                 </tr>
               </thead>
               <tbody>
@@ -195,6 +218,7 @@ export default function LeadsPage() {
                     <td className="px-4 py-3">
                       <p className="num font-medium whitespace-nowrap">{formatPhone(l.phone)}</p>
                       <p className="text-xs text-muted-foreground">{l.name}</p>
+                      <LeadMessage lead={l} className="mt-0.5 line-clamp-2 max-w-80 text-xs text-subtle" />
                     </td>
                     <td className="px-4 py-3">
                       <SourceLabel lead={l} />
@@ -212,7 +236,8 @@ export default function LeadsPage() {
                     <td className="px-4 py-3 text-right">
                       <StatusPill lead={l} />
                     </td>
-                    <td className="py-1.5 pr-3 text-right">
+                    <td className="py-1.5 pr-3 text-right whitespace-nowrap">
+                      <WhatsAppButton lead={l} />
                       <RemoveButton lead={l} />
                     </td>
                   </tr>
@@ -235,9 +260,11 @@ export default function LeadsPage() {
                     </div>
                     <StatusPill lead={l} />
                   </div>
+                  <LeadMessage lead={l} className="mt-2 line-clamp-2 text-xs text-subtle" />
                   <div className="mt-3 flex items-center justify-between gap-3">
                     <SourceLabel lead={l} />
                     <span className="min-w-0 flex-1 truncate text-right text-xs text-muted-foreground">{l.adId ? adName.get(l.adId) : t.leads.noAd}</span>
+                    <WhatsAppButton lead={l} />
                     <RemoveButton lead={l} />
                   </div>
                 </Surface>

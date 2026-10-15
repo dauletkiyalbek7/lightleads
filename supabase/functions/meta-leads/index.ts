@@ -277,7 +277,7 @@ async function handleClick(click: AdClick) {
       externalId: click.messageId,
       externalAdId: click.adId,
       createdAt: click.sentAt,
-      payload: { phone_number_id: click.numberId, referral: click.referral },
+      payload: { phone_number_id: click.numberId, referral: click.referral, ...(click.text ? { message: click.text } : {}) },
     });
     await mark(channel, { saved });
   });

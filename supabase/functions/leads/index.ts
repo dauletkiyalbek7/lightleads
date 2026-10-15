@@ -1,6 +1,7 @@
 // Edge Function `leads`: приём лидов.
 //   POST + ключ workspace (заголовок x-workspace-key, параметр ?key= или поле key) — заявка с сайта,
 //        Tilda или любого вебхука. Открытый адрес: ключ только добавляет лиды, прочитать по нему ничего нельзя.
+//        Заголовок x-lead-source: sheet — строка Google-таблицы (её присылает скрипт из «Настройки → Источники лидов»).
 //   POST {action} + JWT — действия вошедшего пользователя: добавить лид вручную, удалить лид.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { admin, type Caller, getCaller, HttpError, requireMember } from "../_shared/core.ts";
@@ -10,7 +11,11 @@ const MAX_BODY_BYTES = 32_000;
 const MAX_NAME_LENGTH = 120;
 const MINUTE_MS = 60_000;
 /** Больше стольких заявок в минуту с одного ключа — это не люди, а сбой или накрутка. */
-const MAX_LEADS_PER_MINUTE = 60;
+const MAX_LEADS_PER_MINUTE: Record<IngestSource, number> = { website: 60, sheet: 120 };
+const DAY_MS = 24 * 60 * MINUTE_MS;
+/** Дату из таблицы принимаем, только если она похожа на правду: не старше года и не из будущего. */
+const MAX_LEAD_AGE_MS = 365 * DAY_MS;
+const MAX_CLOCK_SKEW_MS = 5 * MINUTE_MS;
 /** Повторная отправка той же формы (двойной клик, сниппет и вебхук одновременно) — один лид. */
 const DUPLICATE_WINDOW_MS = 10 * MINUTE_MS;
 /** ID кампаний, групп и объявлений у Meta и TikTok — длинные числа. */
@@ -20,7 +25,7 @@ const LEAD_COLUMNS = "id, phone, name, source, platform, campaign_id, adset_id, 
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-workspace-key",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-workspace-key, x-lead-source",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -28,6 +33,8 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 
 type Body = Record<string, unknown>;
+/** Откуда пришла заявка по ключу: с сайта (вебхуки, скрипт) или из Google-таблицы. */
+type IngestSource = "website" | "sheet";
 
 /** К чему привязан лид: объявление, его группа и кампания. */
 interface Source {
@@ -78,7 +85,14 @@ const matchLevel = (source: Source) => (source.ad_id ? "ad" : source.adset_id ? 
 
 // ---------- Заявка с сайта ----------
 
-async function ingest(key: string, body: Body) {
+/** Когда оставлена заявка. Свою дату может указать только таблица: в ней бывают и старые строки. */
+function submittedAt(source: IngestSource, date: string | null): string | undefined {
+  if (source !== "sheet" || !date) return undefined;
+  const ms = Date.parse(date);
+  return ms > Date.now() - MAX_LEAD_AGE_MS && ms < Date.now() + MAX_CLOCK_SKEW_MS ? date : undefined;
+}
+
+async function ingest(key: string, body: Body, from: IngestSource) {
   const { data: owner } = await admin.from("ingest_keys").select("workspace_id").eq("key", key).maybeSingle();
   if (!owner) throw new HttpError(401, "invalid_key", "Ключ workspace не найден. Скопируйте его заново в «Настройки → Источники лидов».");
   const workspaceId: string = owner.workspace_id;
@@ -92,14 +106,16 @@ async function ingest(key: string, body: Body) {
     .from("leads")
     .select("id", { count: "exact", head: true })
     .eq("workspace_id", workspaceId)
-    .eq("source", "website")
+    .eq("source", from)
     .gte("created_at", since(MINUTE_MS));
-  if ((count ?? 0) >= MAX_LEADS_PER_MINUTE) throw new HttpError(429, "rate_limited");
+  if ((count ?? 0) >= MAX_LEADS_PER_MINUTE[from]) throw new HttpError(429, "rate_limited");
 
-  const source = await sourceFromUtm(workspaceId, lead.utm);
+  // ID объявления бывает в UTM-метке, а в выгрузке заявок Meta — в отдельной колонке ad_id
+  const adExternalId = EXTERNAL_ID_RE.test(lead.utm.utm_content ?? "") ? lead.utm.utm_content! : lead.adId;
+  const source = await sourceFromUtm(workspaceId, adExternalId ? { ...lead.utm, utm_content: adExternalId } : lead.utm);
 
   // Та же заявка уже пришла: по номеру заявки сайта или тем же телефоном только что
-  const sameLead = () => admin.from("leads").select("id, campaign_id").eq("workspace_id", workspaceId).eq("source", "website").order("created_at", { ascending: false }).limit(1);
+  const sameLead = () => admin.from("leads").select("id, campaign_id").eq("workspace_id", workspaceId).eq("source", from).order("created_at", { ascending: false }).limit(1);
   const byExternalId = lead.externalId ? (await sameLead().eq("external_id", lead.externalId)).data?.[0] : undefined;
   const existing = byExternalId ?? (await sameLead().eq("phone", lead.phone).gte("created_at", since(DUPLICATE_WINDOW_MS))).data?.[0];
   if (existing) {
@@ -116,11 +132,12 @@ async function ingest(key: string, body: Body) {
       workspace_id: workspaceId,
       phone: lead.phone,
       name: lead.name,
-      source: "website",
+      source: from,
       ...source,
       external_id: lead.externalId,
       // Объявление могло ещё не загрузиться из кабинета: по этому ID лид привяжется к нему позже
-      external_ad_id: EXTERNAL_ID_RE.test(lead.utm.utm_content ?? "") ? lead.utm.utm_content : null,
+      external_ad_id: adExternalId,
+      created_at: submittedAt(from, lead.submittedAt),
       utm: lead.utm,
       raw_payload: payload,
     })
@@ -189,7 +206,8 @@ Deno.serve(async (req: Request) => {
     if (req.method !== "POST") throw new HttpError(405, "method_not_allowed");
     const body = await readBody(req);
     const key = req.headers.get("x-workspace-key") ?? new URL(req.url).searchParams.get("key") ?? (typeof body.key === "string" ? body.key : null);
-    if (key) return json(await ingest(key.trim(), body));
+    const from: IngestSource = req.headers.get("x-lead-source") === "sheet" ? "sheet" : "website";
+    if (key) return json(await ingest(key.trim(), body, from));
 
     const action = ACTIONS[String(body.action ?? "")];
     if (!action) throw new HttpError(401, "key_required", "Передайте ключ workspace в заголовке x-workspace-key.");

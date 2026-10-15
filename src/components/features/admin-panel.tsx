@@ -20,6 +20,7 @@ import { formatInt } from "@/lib/format";
 import { sinceLabel } from "@/lib/labels";
 import { metaWebhookInfo, type MetaAppSettings } from "@/lib/meta-leads-api";
 import { callTeam, openProject, type OverviewPerson, type OverviewProject, type PlatformOverview } from "@/lib/team-api";
+import { telegramBotInfo, type TelegramBotInfo } from "@/lib/telegram-api";
 import type { Credentials, SessionUser } from "@/lib/types";
 
 type Tab = keyof typeof t.admin.tabs;
@@ -162,6 +163,7 @@ export function AdminPanel({ user }: { user: SessionUser }) {
           <div className="space-y-4 md:space-y-6">
             <NewProject onCreated={load} onCredentials={show} />
             <NewPerson onCreated={load} onCredentials={show} />
+            <TelegramBot />
             <MetaWebhook />
           </div>
         </div>
@@ -495,6 +497,39 @@ function AddMember({ workspaceId, onAdded, onCredentials }: { workspaceId: strin
 }
 
 /** Что владелец платформы один раз вписывает в приложении Meta: вебхук, политика, удаление данных. */
+/** Работает ли бот, который присылает заявки в Telegram, и как его подключить. */
+function TelegramBot() {
+  const s = t.admin;
+  const [info, setInfo] = useState<TelegramBotInfo | null>(null);
+  useEffect(() => {
+    void telegramBotInfo().then((result) => result.ok && setInfo(result.data));
+  }, []);
+  if (!info) return null;
+  if (info.bot && !info.lastError) {
+    return (
+      <Section title={s.telegramTitle}>
+        <p className="text-sm leading-relaxed">{s.telegramReady(info.bot)}</p>
+      </Section>
+    );
+  }
+  return (
+    <Section title={s.telegramTitle}>
+      {info.configured ? (
+        <p className="text-sm leading-relaxed text-danger">{s.telegramError(info.lastError ?? "")}</p>
+      ) : (
+        <>
+          <p className="text-sm text-muted-foreground">{s.telegramMissing}</p>
+          <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm leading-relaxed">
+            {s.telegramSteps.map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+          </ol>
+        </>
+      )}
+    </Section>
+  );
+}
+
 function MetaWebhook() {
   const s = t.admin;
   const [info, setInfo] = useState<MetaAppSettings | null>(null);

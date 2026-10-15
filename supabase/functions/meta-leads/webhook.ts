@@ -10,6 +10,8 @@ const SECOND_MS = 1000;
 const AD_SOURCE = "ad";
 /** Что из описания объявления сохраняем вместе с лидом. */
 const REFERRAL_KEYS = ["source_id", "source_url", "headline", "ctwa_clid"];
+/** Текст первого сообщения клиента храним коротким: это подсказка менеджеру, а не переписка. */
+const MAX_TEXT_LENGTH = 500;
 
 type Json = Record<string, unknown>;
 const obj = (value: unknown): Json => (value && typeof value === "object" && !Array.isArray(value) ? (value as Json) : {});
@@ -90,6 +92,8 @@ export interface AdClick {
   name: string;
   adId: string;
   sentAt: string;
+  /** Текст сообщения; "" — клиент прислал не текст (фото, голосовое). */
+  text: string;
   referral: Record<string, string>;
 }
 
@@ -126,6 +130,7 @@ function adClicks(value: Json): AdClick[] {
       name: names.get(text(message.from)) ?? "",
       adId,
       sentAt: new Date(Number.isFinite(sentMs) && sentMs > 0 ? sentMs : Date.now()).toISOString(),
+      text: text(obj(message.text).body).slice(0, MAX_TEXT_LENGTH),
       referral: Object.fromEntries(REFERRAL_KEYS.map((key) => [key, text(referral[key])]).filter(([, v]) => v)),
     });
   }

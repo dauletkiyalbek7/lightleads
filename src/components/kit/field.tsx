@@ -106,7 +106,8 @@ export function CopyButton({ text, className }: { text: string; className?: stri
 }
 
 /** Строка/блок кода с кнопкой копирования (UTM, сниппет, вебхук). */
-export function CopyBlock({ text, multiline, label }: { text: string; multiline?: boolean; label?: ReactNode }) {
+/** tall — длинный текст (скрипт): показываем начало с прокруткой, копируется целиком. */
+export function CopyBlock({ text, multiline, tall, label }: { text: string; multiline?: boolean; tall?: boolean; label?: ReactNode }) {
   return (
     <div className="rounded-2xl border border-border bg-muted/60">
       {label && <div className="flex items-center gap-2 px-3.5 pt-3 text-xs font-medium text-muted-foreground">{label}</div>}
@@ -115,6 +116,7 @@ export function CopyBlock({ text, multiline, label }: { text: string; multiline?
           className={cn(
             "min-w-0 flex-1 py-2 font-mono text-[12.5px] leading-relaxed text-foreground",
             multiline ? "whitespace-pre-wrap break-words" : "no-scrollbar overflow-x-auto whitespace-nowrap",
+            tall && "max-h-64 overflow-y-auto",
           )}
         >
           {text}

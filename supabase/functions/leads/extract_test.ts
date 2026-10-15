@@ -1,6 +1,6 @@
 // Запуск: deno test supabase/functions/leads/extract_test.ts
 import { assertEquals } from "jsr:@std/assert@1";
-import { extractLead, isProbe, normalizePhone, parseBody } from "./extract.ts";
+import { extractLead, isProbe, normalizePhone, parseBody, parseLeadDate } from "./extract.ts";
 
 Deno.test("телефон приводится к E.164 для Казахстана", () => {
   assertEquals(normalizePhone("8 701 123 45 67", "KZ"), "+77011234567");
@@ -21,7 +21,7 @@ Deno.test("мусор вместо телефона отклоняется", () 
 
 Deno.test("JSON с сайта: телефон, имя и метки", () => {
   const lead = extractLead({ phone: "8 701 123 45 67", name: "Айгерим", utm_source: "facebook", utm_content: "120210000000000" }, "KZ");
-  assertEquals(lead, { phone: "+77011234567", name: "Айгерим", utm: { utm_source: "facebook", utm_content: "120210000000000" }, externalId: null });
+  assertEquals(lead, { phone: "+77011234567", name: "Айгерим", utm: { utm_source: "facebook", utm_content: "120210000000000" }, externalId: null, adId: null, submittedAt: null });
 });
 
 Deno.test("форма Tilda: поля с заглавной буквы и номер заявки", () => {
@@ -60,4 +60,30 @@ Deno.test("проверочный запрос Tilda распознаётся", 
 
 Deno.test("JSON, присланный как text/plain, разбирается", () => {
   assertEquals(parseBody('{"phone":"87011234567"}', "text/plain;charset=UTF-8"), { phone: "87011234567" });
+});
+
+Deno.test("строка Google-таблицы: русские заголовки, дата и ID объявления", () => {
+  const lead = extractLead({ "Ваше имя": "Данияр", "Номер телефона": "8 707 765 43 21", "Дата": "15.10.2026 14:30", ad_id: "ag:120210000000001", "Город": "Алматы" }, "KZ");
+  assertEquals(lead.phone, "+77077654321");
+  assertEquals(lead.name, "Данияр");
+  assertEquals(lead.adId, "120210000000001");
+  assertEquals(lead.submittedAt, "2026-10-15T09:30:00.000Z");
+});
+
+Deno.test("выгрузка Meta: full_name, phone_number, created_time", () => {
+  const lead = extractLead({ id: "l:1", created_time: "2026-10-14T20:15:00+0000", ad_id: "120210000000002", full_name: "Aruzhan", phone_number: "+77011112233" }, "KZ");
+  assertEquals(lead.name, "Aruzhan");
+  assertEquals(lead.adId, "120210000000002");
+  assertEquals(lead.submittedAt, "2026-10-14T20:15:00.000Z");
+});
+
+Deno.test("дата заявки: поддерживаемые виды и мусор", () => {
+  assertEquals(parseLeadDate("2026-10-15T09:30:00.000Z"), "2026-10-15T09:30:00.000Z");
+  assertEquals(parseLeadDate("2026-10-15 14:30"), "2026-10-15T09:30:00.000Z");
+  assertEquals(parseLeadDate("2026-10-15"), "2026-10-14T19:00:00.000Z");
+  assertEquals(parseLeadDate("5.1.2026, 9:05:30"), "2026-01-05T04:05:30.000Z");
+  assertEquals(parseLeadDate("15.10.2026"), "2026-10-14T19:00:00.000Z");
+  assertEquals(parseLeadDate("вчера"), null);
+  assertEquals(parseLeadDate("10/15/2026"), null);
+  assertEquals(parseLeadDate("2026-13-45 99:99"), null);
 });

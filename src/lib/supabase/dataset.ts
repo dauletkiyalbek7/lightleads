@@ -106,8 +106,10 @@ export interface LeadRow {
   adset_id: string | null;
   ad_id: string | null;
   created_at: string;
+  /** Есть не у всех запросов: только там, где его выбирают из исходной заявки. */
+  message?: string | null;
 }
-export const LEAD_COLUMNS = "id, phone, name, source, platform, campaign_id, adset_id, ad_id, created_at";
+export const LEAD_COLUMNS = "id, phone, name, source, platform, campaign_id, adset_id, ad_id, created_at, message:raw_payload->>message";
 export interface ProductRow {
   id: string;
   name: string;
@@ -185,6 +187,7 @@ export function rowToLead(row: LeadRow): Lead {
     adId: row.ad_id,
     date,
     time,
+    message: row.message ?? null,
   };
 }
 
