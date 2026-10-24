@@ -1,8 +1,9 @@
 "use client";
 
-import { ClipboardList, FileSpreadsheet, Globe, Hand, MessageCircle, Plus, Send, Trash2, type LucideIcon } from "lucide-react";
+import { ClipboardList, FileSpreadsheet, Globe, Hand, MessageCircle, Plus, Send, StickyNote, Trash2, type LucideIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { LeadCard } from "@/components/features/lead-card";
 import { LeadDialog } from "@/components/features/lead-dialog";
 import { PlatformIcon } from "@/components/kit/brand";
 import { Btn } from "@/components/kit/btn";
@@ -17,6 +18,7 @@ import { formatDayShort, inRange } from "@/lib/dates";
 import { formatPhone, whatsappLink } from "@/lib/phone";
 import { useApp } from "@/lib/store";
 import type { Lead, LeadSource } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 type StatusFilter = "all" | "sold" | "open";
 const PAGE_SIZE = 40;
@@ -51,6 +53,7 @@ function WhatsAppButton({ lead }: { lead: Lead }) {
       rel="noopener noreferrer"
       aria-label={t.leads.writeWhatsApp}
       title={t.leads.writeWhatsApp}
+      onClick={(e) => e.stopPropagation()}
       className="inline-flex size-9 shrink-0 items-center justify-center rounded-xl text-success outline-none transition-colors hover:bg-success/10 focus-visible:ring-4 focus-visible:ring-brand/25"
     >
       <MessageCircle className="size-4" />
@@ -58,16 +61,27 @@ function WhatsAppButton({ lead }: { lead: Lead }) {
   );
 }
 
-/** Первое сообщение клиента в WhatsApp: с ним менеджеру проще начать разговор. */
+/** Первое сообщение клиента в WhatsApp и комментарий менеджера: с ними проще продолжить разговор. */
 function LeadMessage({ lead, className }: { lead: Lead; className?: string }) {
-  if (!lead.message) return null;
-  return <p className={className}>«{lead.message}»</p>;
+  if (!lead.message && !lead.note) return null;
+  return (
+    <>
+      {lead.message && <p className={className}>«{lead.message}»</p>}
+      {lead.note && (
+        <p className={cn(className, "text-muted-foreground")}>
+          <StickyNote className="mr-1 inline size-3 align-[-2px]" />
+          {lead.note}
+        </p>
+      )}
+    </>
+  );
 }
 
 export default function LeadsPage() {
   const { ready, isEmpty, ds, sales, range, connectHref, deleteLead } = useApp();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [removing, setRemoving] = useState<Lead | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [query, setQuery] = useState("");
   const [source, setSource] = useState<LeadSource | "all">("all");
@@ -134,7 +148,16 @@ export default function LeadsPage() {
     soldPhones.has(lead.phone) ? <Pill tone="success">{t.leads.statusSold}</Pill> : <Pill>{t.leads.statusNoSale}</Pill>;
 
   const RemoveButton = ({ lead }: { lead: Lead }) => (
-    <Btn variant="ghost" size="icon-sm" className="text-subtle hover:bg-danger/10 hover:text-danger" aria-label={t.common.remove} onClick={() => setRemoving(lead)}>
+    <Btn
+      variant="ghost"
+      size="icon-sm"
+      className="text-subtle hover:bg-danger/10 hover:text-danger"
+      aria-label={t.common.remove}
+      onClick={(e) => {
+        e.stopPropagation();
+        setRemoving(lead);
+      }}
+    >
       <Trash2 />
     </Btn>
   );
@@ -142,6 +165,7 @@ export default function LeadsPage() {
   return (
     <div className="space-y-4">
       <LeadDialog open={dialogOpen} onOpenChange={setDialogOpen} />
+      <LeadCard lead={ds.leads.find((l) => l.id === openId) ?? null} onOpenChange={(open) => !open && setOpenId(null)} />
       <Modal
         open={removing !== null}
         onOpenChange={(open) => !open && !pending && setRemoving(null)}
@@ -211,12 +235,22 @@ export default function LeadsPage() {
               </thead>
               <tbody>
                 {shown.map((l) => (
-                  <tr key={l.id} className="border-b border-border transition-colors last:border-0 hover:bg-muted/50">
+                  <tr key={l.id} onClick={() => setOpenId(l.id)} className="cursor-pointer border-b border-border transition-colors last:border-0 hover:bg-muted/50">
                     <td className="num px-5 py-3 whitespace-nowrap text-muted-foreground">
                       {formatDayShort(l.date)}, {l.time}
                     </td>
                     <td className="px-4 py-3">
-                      <p className="num font-medium whitespace-nowrap">{formatPhone(l.phone)}</p>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpenId(l.id);
+                        }}
+                        aria-label={t.leads.open}
+                        className="num rounded-lg text-left font-medium whitespace-nowrap outline-none hover:text-brand focus-visible:ring-4 focus-visible:ring-brand/25"
+                      >
+                        {formatPhone(l.phone)}
+                      </button>
                       <p className="text-xs text-muted-foreground">{l.name}</p>
                       <LeadMessage lead={l} className="mt-0.5 line-clamp-2 max-w-80 text-xs text-subtle" />
                     </td>
@@ -249,7 +283,7 @@ export default function LeadsPage() {
           <ul className="space-y-2.5 md:hidden">
             {shown.map((l) => (
               <li key={l.id}>
-                <Surface className="p-4">
+                <Surface className="cursor-pointer p-4" onClick={() => setOpenId(l.id)}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="num text-[15px] font-semibold">{formatPhone(l.phone)}</p>

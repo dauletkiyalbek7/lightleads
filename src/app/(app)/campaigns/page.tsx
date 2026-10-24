@@ -27,8 +27,8 @@ import { useApp } from "@/lib/store";
 import type { Currency, EntityStatus, Platform } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-type MoneyKey = "spend" | "cpm" | "cpc" | "cpl" | "cac" | "revenue" | "profit";
-type IntKey = "impressions" | "clicks" | "leads" | "sales";
+type MoneyKey = "spend" | "cpm" | "cpc" | "adCpl" | "cpl" | "cac" | "revenue" | "profit";
+type IntKey = "impressions" | "clicks" | "adLeads" | "leads" | "sales";
 type PctKey = "ctr" | "cr";
 
 type Column =
@@ -48,6 +48,8 @@ const COLUMNS: Column[] = [
   { key: "clicks", kind: "int" },
   { key: "ctr", kind: "pct" },
   { key: "cpc", kind: "money" },
+  { key: "adLeads", kind: "int" },
+  { key: "adCpl", kind: "money" },
   { key: "leads", kind: "int" },
   { key: "cpl", kind: "money" },
   { key: "sales", kind: "int" },
@@ -59,7 +61,15 @@ const COLUMNS: Column[] = [
   { key: "roas", kind: "ratio" },
   { key: "pixel", kind: "pixel" },
 ];
-const DEFAULT_COLUMNS: ColumnKey[] = ["spend", "leads", "cpl", "sales", "cac", "revenue", "profit", "romi", "pixel"];
+const DEFAULT_COLUMNS: ColumnKey[] = ["spend", "adLeads", "adCpl", "leads", "cpl", "sales", "cac", "revenue", "profit", "romi", "pixel"];
+/** Подсказки к заголовкам колонок: чем лиды кабинета отличаются от фактических. */
+const COLUMN_HINTS: Partial<Record<ColumnKey, string>> = {
+  adLeads: t.metricHint.adLeads,
+  adCpl: t.metricHint.adCpl,
+  leads: t.metricHint.leads,
+  cpl: t.metricHint.cpl,
+  pixel: t.metric.pixelHint,
+};
 const INDENT_PX = { campaign: 0, adset: 28, ad: 56 } as const;
 
 function sortValue(col: Column, totals: Totals, d: Derived): number | null {
@@ -306,7 +316,7 @@ export default function CampaignsPage() {
                           <button
                             type="button"
                             onClick={() => onSort(col.key)}
-                            title={col.key === "pixel" ? t.metric.pixelHint : undefined}
+                            title={COLUMN_HINTS[col.key]}
                             className={cn(
                               "inline-flex min-h-8 items-center gap-1 rounded-lg px-1.5 outline-none hover:text-foreground focus-visible:ring-4 focus-visible:ring-brand/25",
                               active && "text-foreground",
@@ -410,6 +420,16 @@ export default function CampaignsPage() {
                         <dt className="text-xs text-muted-foreground">{t.metric.revenue}</dt>
                         <dd className="mt-0.5">
                           <Money value={campaign.totals.revenue} />
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs text-muted-foreground">{t.metric.adLeads}</dt>
+                        <dd className="mt-0.5 font-semibold">{formatInt(campaign.totals.adLeads)}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs text-muted-foreground">{t.metric.adCpl}</dt>
+                        <dd className="mt-0.5">
+                          <Money value={dd.USD.adCpl === null || dd.KZT.adCpl === null ? null : { USD: dd.USD.adCpl, KZT: dd.KZT.adCpl }} />
                         </dd>
                       </div>
                       <div>

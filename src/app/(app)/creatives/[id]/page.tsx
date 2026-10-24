@@ -69,7 +69,7 @@ export default function CreativePage() {
   const adset = ds.adsets.find((a) => a.id === ad.adsetId);
   const dd = deriveDual(totals);
   const d = dd[currency];
-  const pair = (k: "cpl" | "cac" | "cpm" | "aov" | "revenue" | "profit" | "spend"): Dual | null => {
+  const pair = (k: "adCpl" | "cpl" | "cac" | "cpm" | "aov" | "revenue" | "profit" | "spend"): Dual | null => {
     const usd = dd.USD[k];
     const kzt = dd.KZT[k];
     return usd === null || kzt === null ? null : { USD: usd, KZT: kzt };
@@ -161,8 +161,16 @@ export default function CreativePage() {
                 <Stat label={t.metric.roas} hint={t.metricHint.roas}>
                   {formatRatio(d.roas)}
                 </Stat>
-                <Stat label={t.metric.leads}>{formatInt(totals.leads)}</Stat>
-                <Stat label={t.metric.cplLong}>
+                <Stat label={t.metric.adLeads} hint={t.metricHint.adLeads}>
+                  {formatInt(totals.adLeads)}
+                </Stat>
+                <Stat label={t.metric.adCplLong} hint={t.metricHint.adCpl}>
+                  <Money value={pair("adCpl")} />
+                </Stat>
+                <Stat label={t.metric.leads} hint={t.metricHint.leads}>
+                  {formatInt(totals.leads)}
+                </Stat>
+                <Stat label={t.metric.cplLong} hint={t.metricHint.cpl}>
                   <Money value={pair("cpl")} />
                 </Stat>
                 <Stat label={t.metric.sales}>{formatInt(totals.sales)}</Stat>

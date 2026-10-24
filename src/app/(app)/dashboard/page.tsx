@@ -8,6 +8,7 @@ import { smooth } from "@/components/charts/sparkline";
 import { AdviceCard } from "@/components/features/advice-card";
 import { Funnel } from "@/components/features/funnel";
 import { KpiCard } from "@/components/features/kpi-card";
+import { MetricGrid } from "@/components/features/metric-grid";
 import { PlatformIcon } from "@/components/kit/brand";
 import { Btn } from "@/components/kit/btn";
 import { CreativeThumb } from "@/components/kit/creative-thumb";
@@ -91,7 +92,7 @@ export default function DashboardPage() {
       <Stagger className="no-scrollbar -mx-4 flex snap-x gap-3 overflow-x-auto px-4 py-1 md:mx-0 md:grid md:grid-cols-3 md:gap-4 md:overflow-visible md:px-0 2xl:grid-cols-6">
         {[
           <KpiCard key="spend" label={t.metric.spend} icon={<Wallet />} tone="spend" color={COLORS.spend} money={money("spend")} delta={delta(c.spend, p.spend)} good="none" spark={spark.spend} />,
-          <KpiCard key="leads" label={t.metric.leads} icon={<Users />} tone="blue" color={COLORS.leads} count={period.total.leads} delta={delta(period.total.leads, previous.total.leads)} spark={spark.leads} />,
+          <KpiCard key="leads" label={t.metric.leads} icon={<Users />} tone="blue" color={COLORS.leads} count={period.total.leads} delta={delta(period.total.leads, previous.total.leads)} spark={spark.leads} hint={t.metricHint.leads} note={t.dashboard.adLeadsNote(formatInt(period.total.adLeads))} />,
           <KpiCard key="sales" label={t.metric.sales} icon={<ShoppingBag />} tone="sun" color={COLORS.sales} count={period.total.sales} delta={delta(period.total.sales, previous.total.sales)} spark={spark.sales} />,
           <KpiCard key="revenue" label={t.metric.revenue} icon={<Banknote />} tone="brand" color={COLORS.revenue} money={money("revenue")} delta={delta(c.revenue, p.revenue)} spark={spark.revenue} />,
           <KpiCard key="profit" label={t.metric.profit} icon={<PiggyBank />} tone="success" color={COLORS.profit} money={money("profit")} delta={delta(c.profit, p.profit)} spark={spark.profit} hint={t.metricHint.profit} />,
@@ -120,6 +121,10 @@ export default function DashboardPage() {
           </Btn>
         </Surface>
       )}
+
+      <Section title={t.dashboard.metricsTitle} hint={t.dashboard.metricsHint}>
+        <MetricGrid totals={period.total} dd={cur} previous={{ totals: previous.total, dd: prev }} />
+      </Section>
 
       <Stagger className="grid gap-4 md:gap-6 xl:grid-cols-3">
         <StaggerItem className="min-w-0 xl:col-span-2">

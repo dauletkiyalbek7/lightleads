@@ -66,6 +66,7 @@ export function aggregate(
     part.reach = row.reach;
     part.clicks = row.clicks;
     part.pixelPurchases = row.pixelPurchases;
+    part.adLeads = row.platformLeads + row.messagingStarted;
     part.videoPlays = row.videoPlays;
     part.video3s = row.video3s;
     part.videoHold = row.videoHold;

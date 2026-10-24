@@ -40,7 +40,7 @@ interface CommonProps {
 }
 
 type BtnProps = CommonProps & Omit<HTMLMotionProps<"button">, "children" | "className"> & { href?: undefined };
-type LinkBtnProps = CommonProps & { href: string; "aria-label"?: string; onClick?: () => void };
+type LinkBtnProps = CommonProps & { href: string; "aria-label"?: string; onClick?: () => void; target?: string; rel?: string };
 
 export function Btn(props: BtnProps | LinkBtnProps) {
   const { variant = "primary", size = "md", className, children, ...rest } = props;

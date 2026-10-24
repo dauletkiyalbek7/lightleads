@@ -27,11 +27,13 @@ interface KpiCardProps {
   good?: "up" | "down" | "none";
   spark: number[];
   hint?: string;
+  /** Короткая строка под значением, если метрика не денежная. */
+  note?: string;
   className?: string;
 }
 
 /** KPI-карточка: анимированный счётчик, дельта к прошлому периоду и сумма во второй валюте. */
-export function KpiCard({ label, icon, tone, color, money, count, percent, delta, good = "up", spark, hint, className }: KpiCardProps) {
+export function KpiCard({ label, icon, tone, color, money, count, percent, delta, good = "up", spark, hint, note, className }: KpiCardProps) {
   const { currency, compare } = useApp();
   const second = otherCurrency(currency);
 
@@ -65,6 +67,7 @@ export function KpiCard({ label, icon, tone, color, money, count, percent, delta
               <RateTip />
             </>
           )}
+          {!money && note && <span className="num truncate text-xs text-muted-foreground">{note}</span>}
         </div>
         <Sparkline data={spark} color={color} className="-mx-5 mt-2 -mb-5 w-[calc(100%+2.5rem)]" />
       </Surface>

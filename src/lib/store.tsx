@@ -9,7 +9,7 @@ import { toDual } from "./currency";
 import { addDays, previousPeriod, resolvePeriod, todayISO, type PeriodPreset } from "./dates";
 import { AD_PLATFORMS, adErrorText, runAdSync } from "./ads-api";
 import { DEFAULT_MARGIN_PCT, DEMO_SALES_CURRENCY, generateDataset } from "./mock/seed";
-import { leadsAdd, leadsDelete, type ManualLeadInput } from "./leads-api";
+import { leadsAdd, leadsDelete, leadSetNote, type ManualLeadInput } from "./leads-api";
 import { detectSignals, suggestTargets, type Signal } from "./rules";
 import { productArchive, productInsert, saleDelete, saleSetSource, salesInsert } from "./sales-api";
 import { scoreCreatives, type CreativeStat } from "./score";
@@ -136,6 +136,8 @@ interface AppState {
   /** Лид, добавленный вручную. Телефон проверяет и приводит к E.164 сервер. */
   addLead: (input: ManualLeadInput) => Promise<FnResult<Lead>>;
   deleteLead: (id: string) => Promise<boolean>;
+  /** Комментарий менеджера к лиду. */
+  setLeadNote: (id: string, note: string) => Promise<boolean>;
   addProduct: (p: Omit<Product, "id">) => Promise<boolean>;
   removeProduct: (id: string) => Promise<boolean>;
   inviteMember: (input: { email: string; name: string }) => Promise<TeamResult<Credentials>>;
@@ -468,6 +470,20 @@ export function AppProvider({ children, session = null }: { children: ReactNode;
     [usesRealData, workspace.id, patchDataset],
   );
 
+  const setLeadNote = useCallback(
+    async (id: string, note: string) => {
+      const withNote = (leads: Lead[]) => leads.map((l) => (l.id === id ? { ...l, note } : l));
+      if (usesRealData) {
+        if (!(await leadSetNote(id, note))) return false;
+        patchDataset((dataset) => ({ leads: withNote(dataset.leads) }));
+        return true;
+      }
+      setDemo((prev) => prev && { ...prev, leads: withNote(prev.leads) });
+      return true;
+    },
+    [usesRealData, patchDataset],
+  );
+
   const addProduct = useCallback(
     async (p: Omit<Product, "id">) => {
       if (!usesRealData) {
@@ -585,6 +601,7 @@ export function AppProvider({ children, session = null }: { children: ReactNode;
     ingestKey,
     addLead,
     deleteLead,
+    setLeadNote,
     addProduct,
     removeProduct,
     inviteMember,

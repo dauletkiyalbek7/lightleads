@@ -13,7 +13,10 @@ export interface Totals {
   impressions: number;
   reach: number;
   clicks: number;
+  /** Лиды, которые дошли до LightLeads (факт). */
   leads: number;
+  /** Лиды по данным рекламного кабинета: заявки и начатые переписки. */
+  adLeads: number;
   sales: number;
   pixelPurchases: number;
   videoPlays: number;
@@ -31,6 +34,7 @@ export const emptyTotals = (): Totals => ({
   reach: 0,
   clicks: 0,
   leads: 0,
+  adLeads: 0,
   sales: 0,
   pixelPurchases: 0,
   videoPlays: 0,
@@ -44,6 +48,7 @@ const COUNT_KEYS = [
   "reach",
   "clicks",
   "leads",
+  "adLeads",
   "sales",
   "pixelPurchases",
   "videoPlays",
@@ -76,8 +81,10 @@ export interface Derived {
   ctr: number | null;
   cpc: number | null;
   frequency: number | null;
-  /** Стоимость лида */
+  /** Стоимость лида (факт) */
   cpl: number | null;
+  /** Стоимость лида по данным кабинета */
+  adCpl: number | null;
   /** Конверсия лид → продажа */
   cr: number | null;
   /** Стоимость продажи */
@@ -113,6 +120,7 @@ export function derive(t: Totals, currency: Currency): Derived {
     cpc: ratio(spend, t.clicks),
     frequency: ratio(t.impressions, t.reach),
     cpl: ratio(spend, t.leads),
+    adCpl: ratio(spend, t.adLeads),
     cr: ratio(t.sales, t.leads),
     cac: ratio(spend, t.sales),
     aov: ratio(revenue, t.sales),

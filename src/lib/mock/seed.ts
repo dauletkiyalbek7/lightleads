@@ -238,6 +238,8 @@ const MOBILE_PREFIXES = ["700", "701", "702", "705", "707", "708", "747", "771",
 
 const BASE_CPL: Record<Platform, number> = { meta: 7.2, tiktok: 2950 };
 const BASE_CPM: Record<Platform, [number, number]> = { meta: [2.2, 3.6], tiktok: [620, 1100] };
+/** Во сколько раз лидов в кабинете больше, чем дошло до LightLeads. */
+const AD_LEADS_OVERCOUNT = 1.18;
 const KZT_PER_USD_START = 507;
 const RATE_HISTORY_DAYS = HISTORY_DAYS + 30;
 
@@ -546,6 +548,9 @@ export function generateDataset(today: string): Dataset {
       const pixelPurchases = isWebsite && sold ? Math.max(0, sold.count + (rnd() < 0.3 ? -1 : rnd() < 0.2 ? 1 : 0)) : 0;
       const pixelValueKzt = isWebsite && sold && pixelPurchases ? (sold.amountKzt / sold.count) * pixelPurchases * between(0.85, 1.1) : 0;
       const fx = rateOn(rates, date).rate;
+      // Кабинет насчитывает лидов больше, чем доходит до LightLeads: дубли и заявки без номера
+      const adLeads = Math.round(((leadCounts[adIndex] * spendWeights[d]) / spendWeightSum) * AD_LEADS_OVERCOUNT);
+      const byMessage = m.source === "whatsapp" || m.source === "instagram";
       insights.push({
         adId: ad.id,
         date,
@@ -556,6 +561,8 @@ export function generateDataset(today: string): Dataset {
         clicks,
         pixelPurchases,
         pixelValue: account.currency === "USD" ? round2(pixelValueKzt / fx) : Math.round(pixelValueKzt),
+        platformLeads: byMessage ? 0 : adLeads,
+        messagingStarted: byMessage ? adLeads : 0,
         videoPlays,
         video3s,
         videoHold: Math.round(video3s * holdRate * between(0.9, 1.1)),

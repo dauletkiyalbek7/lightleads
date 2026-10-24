@@ -121,6 +121,10 @@ export interface InsightDaily {
   /** Конверсии по данным пикселя: показываем отдельно, не смешиваем с продажами. */
   pixelPurchases: number;
   pixelValue: number;
+  /** Заявки по данным кабинета: лид-формы и событие «лид» пикселя сайта. */
+  platformLeads: number;
+  /** Переписки, начатые с рекламы «Написать в WhatsApp / Direct», по данным кабинета. */
+  messagingStarted: number;
   videoPlays: number;
   video3s: number;
   videoHold: number;
@@ -150,6 +154,8 @@ export interface Lead {
   time: string;
   /** Первое сообщение клиента в WhatsApp. */
   message?: string | null;
+  /** Комментарий менеджера. */
+  note?: string;
 }
 
 export interface Product {

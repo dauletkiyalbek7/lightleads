@@ -91,6 +91,8 @@ interface InsightRow {
   clicks: number;
   pixel_purchases: number;
   pixel_value: number;
+  platform_leads: number;
+  messaging_started: number;
   video_plays: number;
   video_3s: number;
   video_hold: number;
@@ -108,8 +110,9 @@ export interface LeadRow {
   created_at: string;
   /** Есть не у всех запросов: только там, где его выбирают из исходной заявки. */
   message?: string | null;
+  note?: string;
 }
-export const LEAD_COLUMNS = "id, phone, name, source, platform, campaign_id, adset_id, ad_id, created_at, message:raw_payload->>message";
+export const LEAD_COLUMNS = "id, phone, name, source, platform, campaign_id, adset_id, ad_id, created_at, note, message:raw_payload->>message";
 export interface ProductRow {
   id: string;
   name: string;
@@ -188,6 +191,7 @@ export function rowToLead(row: LeadRow): Lead {
     date,
     time,
     message: row.message ?? null,
+    note: row.note ?? "",
   };
 }
 
@@ -242,7 +246,7 @@ export async function loadWorkspaceData(workspaceId: string, today: string): Pro
     fetchAll<CreativeRow>("creatives", "id, name, type, title, body, cta, thumbnail_path, duration_sec", workspaceId, "id"),
     fetchAll<InsightRow>(
       "insights_daily",
-      "ad_id, date, currency, spend, impressions, reach, clicks, pixel_purchases, pixel_value, video_plays, video_3s, video_hold, video_watch_sec",
+      "ad_id, date, currency, spend, impressions, reach, clicks, pixel_purchases, pixel_value, platform_leads, messaging_started, video_plays, video_3s, video_hold, video_watch_sec",
       workspaceId,
       "date,ad_id",
       { column: "date", value: since },
@@ -349,6 +353,8 @@ export async function loadWorkspaceData(workspaceId: string, today: string): Pro
       clicks: Number(row.clicks),
       pixelPurchases: Number(row.pixel_purchases),
       pixelValue: Number(row.pixel_value),
+      platformLeads: Number(row.platform_leads),
+      messagingStarted: Number(row.messaging_started),
       videoPlays: Number(row.video_plays),
       video3s: Number(row.video_3s),
       videoHold: Number(row.video_hold),
