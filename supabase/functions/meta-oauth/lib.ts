@@ -24,11 +24,18 @@ const RATE_LIMIT_CODES = new Set([4, 17, 32, 613, 80000, 80004]);
 /** Код «токен недействителен»: кабинет нужно переподключить. */
 const TOKEN_ERROR_CODE = 190;
 const MAX_PAGES = 40;
+/** Ответ Meta «слишком много данных»: повтор того же запроса не поможет, нужна страница поменьше. */
+const TOO_MUCH_DATA_TEXT = "reduce the amount of data";
+const TOO_MUCH_DATA = "too_much_data";
+/** Меньше этого страницу не делим: дальше ошибка уже не в размере. */
+const MIN_PAGE_LIMIT = 10;
 
 interface GraphError {
   message?: string;
   code?: number;
 }
+
+const isTooMuchData = (message?: string) => (message ?? "").toLowerCase().includes(TOO_MUCH_DATA_TEXT);
 
 /** GET к Graph API с повторами при лимитах и временных сбоях. */
 export async function graphGet<T>(pathOrUrl: string, params: Record<string, string> = {}, token?: string): Promise<T> {
@@ -43,6 +50,7 @@ export async function graphGet<T>(pathOrUrl: string, params: Record<string, stri
 
     const error = payload.error ?? {};
     if (error.code === TOKEN_ERROR_CODE) throw new HttpError(401, TOKEN_EXPIRED, error.message);
+    if (isTooMuchData(error.message)) throw new HttpError(502, TOO_MUCH_DATA, error.message);
     const retryable = response.status >= 500 || RATE_LIMIT_CODES.has(error.code ?? -1);
     if (!retryable || attempt >= MAX_RETRIES) throw new HttpError(502, "platform_error", error.message ?? `HTTP ${response.status}`);
     await sleep(RETRY_BASE_MS * 2 ** attempt);
@@ -54,10 +62,22 @@ interface GraphPage<T> {
   paging?: { next?: string; cursors?: { after?: string } };
 }
 
-/** Одна страница списка и метка следующей страницы (null — страница последняя). */
+/**
+ * Одна страница списка и метка следующей страницы (null — страница последняя).
+ * Если Meta не может отдать страницу целиком, просит её вдвое меньшей: метка следующей страницы от размера не зависит.
+ */
 export async function graphPage<T>(path: string, params: Record<string, string>, token: string, after?: string | null): Promise<{ data: T[]; after: string | null }> {
-  const page = await graphGet<GraphPage<T>>(path, after ? { ...params, after } : params, token);
-  return { data: page.data ?? [], after: page.paging?.next ? (page.paging.cursors?.after ?? null) : null };
+  let limit = Number(params.limit) || 0;
+  for (;;) {
+    const query = { ...params, ...(limit ? { limit: String(limit) } : {}), ...(after ? { after } : {}) };
+    try {
+      const page = await graphGet<GraphPage<T>>(path, query, token);
+      return { data: page.data ?? [], after: page.paging?.next ? (page.paging.cursors?.after ?? null) : null };
+    } catch (error) {
+      if (!(error instanceof HttpError) || error.code !== TOO_MUCH_DATA || limit <= MIN_PAGE_LIMIT) throw error;
+      limit = Math.max(Math.floor(limit / 2), MIN_PAGE_LIMIT);
+    }
+  }
 }
 
 /** Собирает все страницы списка (paging.next). */
