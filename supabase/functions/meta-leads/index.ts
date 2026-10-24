@@ -278,7 +278,11 @@ async function forwardToTelegram(channel: Channel, message: IncomingMessage, pho
     const chats = await activeChats(channel.workspace_id);
     if (!chats.length) return;
     const lead = leadId ? (await leadNotices([leadId]))[0] : undefined;
-    const outgoing = lead ? leadMessage(lead.notice, APP_URL, true) : chatMessage(await workspaceName(channel.workspace_id), message.name, phone, message.text);
+    // Клиент пишет снова: кнопка «Продажа» под сообщением записывает продажу по его последней заявке
+    const { data: last } = lead ? { data: null } : await admin.from("leads").select("id").eq("workspace_id", channel.workspace_id).eq("phone", phone).order("created_at", { ascending: false }).limit(1);
+    const outgoing = lead
+      ? leadMessage(lead.notice, APP_URL, true, lead.id)
+      : chatMessage(await workspaceName(channel.workspace_id), message.name, phone, message.text, last?.[0]?.id);
     const { sent } = await broadcast(chats, outgoing);
     await rememberThread(channel.workspace_id, channel.id, message.from, sent);
   } catch (error) {

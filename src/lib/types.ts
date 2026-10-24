@@ -168,7 +168,7 @@ export interface Product {
   archived?: boolean;
 }
 
-export type SaleInput = "manual" | "csv" | "sheets" | "amocrm" | "bitrix24";
+export type SaleInput = "manual" | "csv" | "sheets" | "amocrm" | "bitrix24" | "telegram";
 
 export interface Sale {
   id: string;

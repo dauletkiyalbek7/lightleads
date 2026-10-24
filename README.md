@@ -116,6 +116,8 @@ Supabase, проект `lightleads`. Схема лежит в [supabase/migratio
   защита от повторных уведомлений Meta, заявки WhatsApp вне общей очереди Telegram;
 - `0012_lead_card.sql` — комментарий менеджера к лиду (участник меняет только его) и мгновенная
   привязка лида к объявлению, которое загрузилось из кабинета позже заявки;
+- `0013_telegram_sales.sql` — продажи из Telegram: способ ввода `telegram`, имя продавца
+  (`seller_name`) и вопросы бота о сумме (`telegram_sale_prompts`, только для сервера);
 - `0002_data_model.sql` — таблицы рекламы, лидов, продаж и интеграций. У каждой есть `workspace_id`,
   участник читает только свой workspace. Права записи добавляются в фазах, где появляются экраны.
 
@@ -284,10 +286,19 @@ Edge Function [supabase/functions/telegram](supabase/functions/telegram/index.ts
   `whatsapp_business_messaging`) и ставит реакцию 👍; при ошибке отвечает понятной причиной
   ([telegram/whatsapp.ts](supabase/functions/telegram/whatsapp.ts)), например «прошло больше 24 часов».
   Пока отправляется только текст.
+- **Продажи из чата.** Под заявкой (и под следующими сообщениями клиента WhatsApp) есть кнопка
+  «✅ Продажа». Бот задаёт вопрос «какая сумма» (force reply) и запоминает его в
+  `telegram_sale_prompts`; ответ вида `45000 английский`, `45 000 тг`, `45к` или `$300 курс`
+  ([telegram/sale.ts](supabase/functions/telegram/sale.ts)) записывается в `sales` с `input = telegram`,
+  телефоном и именем лида, датой «сегодня» в поясе проекта и именем менеджера в `seller_name`. Товар
+  подбирается по названию из справочника (себестоимость из товара), иначе — средняя маржа проекта.
+  Под подтверждением — «Отменить» (в течение суток). Записывать и отменять можно только из чата,
+  подключённого к проекту этого лида. Вебхук бота должен получать `callback_query`: он
+  перерегистрируется при подключении чата или открытии `/admin`.
 - Отключить чат может тот, кто его подключил, владелец проекта или владелец платформы.
-- Сообщения покрыты тестами: `deno test supabase/functions/telegram/message_test.ts`.
-- Функция выкладывается с файлами `telegram/bot.ts`, `telegram/message.ts`, `telegram/whatsapp.ts`,
-  `_shared/core.ts` и `meta-oauth/lib.ts`, точка входа — `telegram/index.ts`. `meta-leads` теперь
+- Сообщения покрыты тестами: `deno test --allow-env supabase/functions/telegram/`.
+- Функция выкладывается с файлами `telegram/bot.ts`, `telegram/message.ts`, `telegram/sale.ts`,
+  `telegram/whatsapp.ts`, `_shared/core.ts` и `meta-oauth/lib.ts`, точка входа — `telegram/index.ts`. `meta-leads` теперь
   тоже включает `telegram/bot.ts` и `telegram/message.ts`.
 
 ### Продажи

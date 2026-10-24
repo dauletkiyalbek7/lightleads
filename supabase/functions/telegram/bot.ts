@@ -55,7 +55,11 @@ export async function send(chatId: number, message: OutgoingMessage, replyTo?: n
     parse_mode: "HTML",
     link_preview_options: { is_disabled: true },
     ...(replyTo ? { reply_parameters: { message_id: replyTo, allow_sending_without_reply: true } } : {}),
-    ...(message.buttons.length ? { reply_markup: { inline_keyboard: message.buttons.map((button) => [button]) } } : {}),
+    ...(message.forceReply
+      ? { reply_markup: { force_reply: true, selective: true, input_field_placeholder: message.forceReply } }
+      : message.buttons.length
+        ? { reply_markup: { inline_keyboard: message.buttons.map((button) => [button]) } }
+        : {}),
   });
   return sent.message_id;
 }

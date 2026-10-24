@@ -1,7 +1,8 @@
-// Edge Function `telegram`: бот LightLeads присылает новые заявки проекта в Telegram
-// и передаёт клиентам WhatsApp ответы менеджеров.
+// Edge Function `telegram`: бот LightLeads присылает новые заявки проекта в Telegram,
+// передаёт клиентам WhatsApp ответы менеджеров и записывает продажи, закрытые в чате.
 //   POST + X-Telegram-Bot-Api-Secret-Token — обновление от Telegram: «/start КОД» подключает чат к проекту,
-//                                           ответ на сообщение клиента WhatsApp уходит этому клиенту
+//                                           ответ на сообщение клиента WhatsApp уходит этому клиенту,
+//                                           «✅ Продажа» под заявкой и ответ суммой записывают продажу
 //   POST {action:"cron"} + x-cron-secret   — раз в минуту, когда есть очередь: отправить новые заявки
 //   POST {action} + JWT                    — участник проекта: ссылка на бота, список чатов, проверка, отключение
 //   GET                                    — настроен ли бот (без раскрытия токена)
@@ -10,8 +11,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { admin, type Caller, connectionToken, CORS, getCaller, HttpError, json, requireMember, SUPABASE_URL } from "../_shared/core.ts";
 import { GRAPH_URL } from "../meta-oauth/lib.ts";
-import { APP_URL, BOT_TOKEN, broadcast, CHAT_COLUMNS, type ChatRow, errorText, leadNotices, reply, tg, workspaceName } from "./bot.ts";
-import { leadMessage, parseStart, sameText, summaryMessage, testMessage, webhookSecret } from "./message.ts";
+import { APP_URL, BOT_TOKEN, broadcast, CHAT_COLUMNS, type ChatRow, errorText, leadNotices, reply, send, tg, workspaceName } from "./bot.ts";
+import { DEMO_LEAD, leadMessage, parseStart, sameText, summaryMessage, testMessage, webhookSecret } from "./message.ts";
+import { DEMO_SALE_NOTE, matchProduct, parseCallback, parseSale, type ProductRow, SALE_HELP, saleCost, salePrompt, saleSavedMessage, saleUndoneText, todayIn } from "./sale.ts";
 import { whatsappProblem } from "./whatsapp.ts";
 
 const WEBHOOK_URL = `${SUPABASE_URL}/functions/v1/telegram`;
@@ -29,8 +31,13 @@ const MAX_TITLE_LENGTH = 120;
 const MAX_WHATSAPP_TEXT = 4096;
 /** Заявки, которые не удалось отправить за сутки, уже не новость. */
 const STALE_MS = DAY_MS;
-const UPDATES = ["message", "my_chat_member"];
+const UPDATES = ["message", "my_chat_member", "callback_query"];
 const SENT_REACTION = "👍";
+/** Продажу из Telegram можно отменить кнопкой в течение суток, дальше — на экране «Продажи». */
+const UNDO_WINDOW_MS = DAY_MS;
+const DEFAULT_TIMEZONE = "Asia/Almaty";
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const LEAD_GONE = "Заявка не найдена: возможно, её удалили в LightLeads.";
 
 type Body = Record<string, unknown>;
 
@@ -62,14 +69,32 @@ interface TgChat {
   username?: string;
 }
 
+interface TgUser {
+  is_bot?: boolean;
+  first_name?: string;
+  last_name?: string;
+  username?: string;
+}
+
 interface TgMessage {
   message_id: number;
   chat?: TgChat;
-  from?: { is_bot?: boolean };
+  from?: TgUser;
   text?: string;
   migrate_to_chat_id?: number;
   reply_to_message?: { message_id: number };
 }
+
+interface TgCallback {
+  id: string;
+  from?: TgUser;
+  message?: { message_id: number; chat?: TgChat };
+  data?: string;
+}
+
+/** Имя менеджера в Telegram: так он попадёт в продажу как продавец. */
+const personName = (user?: TgUser) =>
+  user ? ([user.first_name, user.last_name].filter(Boolean).join(" ") || (user.username ? `@${user.username}` : "")).slice(0, MAX_TITLE_LENGTH) : "";
 
 const chatTitle = (chat: TgChat) =>
   (chat.title || [chat.first_name, chat.last_name].filter(Boolean).join(" ") || chat.username || "").trim().slice(0, MAX_TITLE_LENGTH) || String(chat.id);
@@ -144,12 +169,111 @@ async function relayReply(message: TgMessage, chat: TgChat, repliedTo: number) {
   );
 }
 
+// ---------- Продажи из чата ----------
+
+/** Чат подключён к этому проекту: только из него можно записывать и отменять продажи проекта. */
+async function chatInWorkspace(chatId: number, workspaceId: string): Promise<boolean> {
+  const { data } = await admin.from("telegram_chats").select("id").eq("chat_id", chatId).eq("workspace_id", workspaceId).limit(1);
+  return Boolean(data?.length);
+}
+
+/** Ответ на нажатие кнопки; text — короткое всплывающее сообщение. */
+const answerCallback = (id: string, text?: string) => tg("answerCallbackQuery", { callback_query_id: id, ...(text ? { text } : {}) }).catch(() => undefined);
+
+/** «✅ Продажа» под заявкой: бот спрашивает сумму ответом на своё сообщение. */
+async function askSale(query: TgCallback, chat: TgChat, messageId: number, leadId: string) {
+  if (leadId === DEMO_LEAD) return answerCallback(query.id, DEMO_SALE_NOTE);
+  const { data: lead } = UUID_RE.test(leadId) ? await admin.from("leads").select("id, workspace_id, name, phone").eq("id", leadId).maybeSingle() : { data: null };
+  if (!lead || !(await chatInWorkspace(chat.id, lead.workspace_id))) return answerCallback(query.id, LEAD_GONE);
+  await answerCallback(query.id);
+  const promptId = await send(chat.id, salePrompt(lead.name, lead.phone), messageId);
+  const { error } = await admin.from("telegram_sale_prompts").insert({ chat_id: chat.id, message_id: promptId, workspace_id: lead.workspace_id, lead_id: lead.id });
+  if (error) throw new HttpError(500, "db_error", error.message);
+}
+
+interface SalePrompt {
+  message_id: number;
+  workspace_id: string;
+  lead_id: string;
+}
+
+/** Менеджер ответил суммой на вопрос бота: записываем продажу по этому лиду. */
+async function recordSale(message: TgMessage, chat: TgChat, prompt: SalePrompt) {
+  const parsed = parseSale(message.text ?? "");
+  if (!parsed) return reply(chat.id, SALE_HELP, message.message_id);
+  const [{ data: lead }, { data: workspace }, { data: products }] = await Promise.all([
+    admin.from("leads").select("name, phone").eq("id", prompt.lead_id).maybeSingle(),
+    admin.from("workspaces").select("sales_currency, margin_pct, timezone").eq("id", prompt.workspace_id).maybeSingle(),
+    admin.from("products").select("id, name, price, cost_type, cost").eq("workspace_id", prompt.workspace_id).is("archived_at", null),
+  ]);
+  if (!lead || !workspace) return reply(chat.id, LEAD_GONE, message.message_id);
+
+  const currency = parsed.currency ?? workspace.sales_currency;
+  // Цена и себестоимость товара заданы в валюте продаж проекта: в другой валюте считаем по средней марже
+  const product = currency === workspace.sales_currency ? matchProduct(parsed.product, (products ?? []) as ProductRow[]) : null;
+  const seller = personName(message.from);
+  const { data: sale, error } = await admin
+    .from("sales")
+    .insert({
+      workspace_id: prompt.workspace_id,
+      phone: lead.phone,
+      customer_name: lead.name,
+      amount: parsed.amount,
+      currency,
+      product_id: product?.id ?? null,
+      cost: saleCost(parsed.amount, product, Number(workspace.margin_pct)),
+      sold_on: todayIn(workspace.timezone || DEFAULT_TIMEZONE),
+      comment: product ? "" : parsed.product,
+      input: "telegram",
+      seller_name: seller,
+    })
+    .select("id")
+    .single();
+  if (error || !sale) throw new HttpError(500, "db_error", error?.message);
+  // На один вопрос — одна продажа: повторный ответ на него уже ничего не запишет
+  await admin.from("telegram_sale_prompts").delete().eq("chat_id", chat.id).eq("message_id", prompt.message_id);
+  await admin.from("audit_log").insert({ workspace_id: prompt.workspace_id, actor_id: null, action: "sale.created", details: { via: "telegram" } });
+  await send(chat.id, saleSavedMessage({ id: sale.id, name: lead.name, amount: parsed.amount, currency, product: product?.name ?? parsed.product, seller }), message.message_id);
+}
+
+/** «Отменить» под записанной продажей: удаляем её, если это продажа из Telegram и прошло меньше суток. */
+async function undoSale(query: TgCallback, chat: TgChat, messageId: number, saleId: string) {
+  const { data: sale } = UUID_RE.test(saleId)
+    ? await admin.from("sales").select("id, workspace_id, amount, currency, input, created_at").eq("id", saleId).maybeSingle()
+    : { data: null };
+  if (!sale || sale.input !== "telegram" || !(await chatInWorkspace(chat.id, sale.workspace_id))) return answerCallback(query.id, "Эта продажа уже удалена.");
+  if (Date.now() - Date.parse(sale.created_at) > UNDO_WINDOW_MS) {
+    return answerCallback(query.id, "Отменить можно в течение суток. Удалите продажу в LightLeads → Продажи.");
+  }
+  await admin.from("sales").delete().eq("id", sale.id);
+  await admin.from("audit_log").insert({ workspace_id: sale.workspace_id, actor_id: null, action: "sale.deleted", details: { via: "telegram", by: personName(query.from) } });
+  await answerCallback(query.id);
+  await tg("editMessageText", { chat_id: chat.id, message_id: messageId, text: saleUndoneText(Number(sale.amount), sale.currency) }).catch(() => undefined);
+}
+
+async function onCallback(query: TgCallback) {
+  const chat = query.message?.chat;
+  const action = parseCallback(query.data ?? "");
+  if (!chat || !query.message || !action) return answerCallback(query.id);
+  if (action.kind === "sale") return askSale(query, chat, query.message.message_id, action.id);
+  return undoSale(query, chat, query.message.message_id, action.id);
+}
+
+/** Ответ на сообщение бота: сумма на вопрос о продаже или ответ клиенту WhatsApp. */
+async function onReply(message: TgMessage, chat: TgChat, repliedTo: number) {
+  const { data: prompt } = await admin.from("telegram_sale_prompts").select("message_id, workspace_id, lead_id").eq("chat_id", chat.id).eq("message_id", repliedTo).maybeSingle();
+  if (prompt) await recordSale(message, chat, prompt as SalePrompt);
+  else await relayReply(message, chat, repliedTo);
+}
+
 async function update(req: Request): Promise<Response> {
   if (!BOT_TOKEN || !sameText(req.headers.get("x-telegram-bot-api-secret-token") ?? "", await webhookSecret(BOT_TOKEN))) throw new HttpError(401, "unauthorized");
   const body = (await req.json().catch(() => ({}))) as {
     message?: TgMessage;
     my_chat_member?: { chat?: TgChat; new_chat_member?: { status?: string } };
+    callback_query?: TgCallback;
   };
+  if (body.callback_query) await onCallback(body.callback_query);
   const message = body.message;
   const chat = message?.chat;
   if (message && chat) {
@@ -157,7 +281,7 @@ async function update(req: Request): Promise<Response> {
     if (message.migrate_to_chat_id) await admin.from("telegram_chats").update({ chat_id: message.migrate_to_chat_id }).eq("chat_id", chat.id);
     const code = typeof message.text === "string" ? parseStart(message.text) : null;
     if (code !== null) await linkChat(chat, code);
-    else if (message.reply_to_message && !message.from?.is_bot) await relayReply(message, chat, message.reply_to_message.message_id);
+    else if (message.reply_to_message && !message.from?.is_bot) await onReply(message, chat, message.reply_to_message.message_id);
   }
   // Бота удалили из группы или заблокировали в личке: заявки туда больше не шлём
   const member = body.my_chat_member;
@@ -196,7 +320,7 @@ async function sendWorkspace(workspaceId: string, items: QueueRow[]): Promise<nu
   let sent = 0;
   const finished = all.filter((id) => !leads.some((lead) => lead.id === id));
   for (const lead of leads) {
-    if (!(await broadcast(chats, leadMessage(lead.notice, APP_URL))).ok) break;
+    if (!(await broadcast(chats, leadMessage(lead.notice, APP_URL, false, lead.id))).ok) break;
     finished.push(lead.id);
     sent += 1;
   }

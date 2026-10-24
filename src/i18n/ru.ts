@@ -333,7 +333,7 @@ export const ru = {
     source: "Источник",
     input: "Способ ввода",
     by: "Кто внёс",
-    inputs: { manual: "Вручную", csv: "CSV", sheets: "Google Sheets", amocrm: "amoCRM", bitrix24: "Bitrix24" },
+    inputs: { manual: "Вручную", csv: "CSV", sheets: "Google Sheets", amocrm: "amoCRM", bitrix24: "Bitrix24", telegram: "Telegram" },
     unknownSource: "Источник не определён",
     manualSource: "указан вручную",
     setSource: "Указать",

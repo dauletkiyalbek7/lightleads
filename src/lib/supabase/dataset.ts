@@ -136,8 +136,10 @@ export interface SaleRow {
   manual_ad_id: string | null;
   /** Кто внёс продажу. Пусто, если этот человек больше не в workspace. */
   creator: { full_name: string; email: string } | null;
+  /** Менеджер, который записал продажу в Telegram. */
+  seller_name: string;
 }
-export const SALE_COLUMNS = "id, phone, customer_name, amount, currency, product_id, cost, sold_on, comment, input, manual_ad_id, creator:profiles(full_name, email)";
+export const SALE_COLUMNS = "id, phone, customer_name, amount, currency, product_id, cost, sold_on, comment, input, manual_ad_id, seller_name, creator:profiles(full_name, email)";
 interface SyncRunRow {
   id: string;
   account_id: string;
@@ -212,7 +214,7 @@ export function rowToSale(row: SaleRow): Sale {
     comment: row.comment,
     input: row.input,
     manualAdId: row.manual_ad_id,
-    createdBy: row.creator ? row.creator.full_name || row.creator.email.split("@")[0] : "",
+    createdBy: row.creator ? row.creator.full_name || row.creator.email.split("@")[0] : row.seller_name,
   };
 }
 
