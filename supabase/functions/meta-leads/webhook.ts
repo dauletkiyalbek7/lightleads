@@ -82,6 +82,17 @@ export interface FormNotice {
   adId: string | null;
 }
 
+/** Фото, видео, аудио или документ клиента: сам файл скачивается у Meta по id. */
+export interface WhatsAppMedia {
+  id: string;
+  type: "image" | "video" | "audio" | "document";
+  /** Аудио, записанное в WhatsApp голосом. */
+  voice: boolean;
+  mimeType: string;
+  /** Название документа; у фото и голосовых его нет. */
+  filename: string | null;
+}
+
 /** Входящее сообщение клиента на номер компании в WhatsApp. */
 export interface IncomingMessage {
   /** ID номера WhatsApp компании, на который написали. */
@@ -95,6 +106,8 @@ export interface IncomingMessage {
   sentAt: string;
   /** Текст сообщения или подпись к вложению: «📷 Фото», «🎤 Голосовое сообщение». */
   text: string;
+  /** Вложение, которое можно переслать файлом; стикеры и прочее — только подписью. */
+  media: WhatsAppMedia | null;
   referral: Record<string, string>;
 }
 
@@ -116,6 +129,20 @@ const MEDIA_LABELS: Record<string, string> = {
   reaction: "Реакция",
 };
 
+const MEDIA_TYPES = new Set<string>(["image", "video", "audio", "document"]);
+
+/** Геопозиция — ссылкой на карту, контакт — именем и номером: менеджер видит их сразу. */
+function placeOrContact(message: Json): string {
+  const location = obj(message.location);
+  const lat = text(location.latitude);
+  const lng = text(location.longitude);
+  if (lat && lng) return [text(location.name), text(location.address), `https://maps.google.com/?q=${lat},${lng}`].filter(Boolean).join(", ");
+  return list(message.contacts)
+    .map((item) => [text(obj(obj(item).name).formatted_name), ...list(obj(item).phones).map((phone) => text(obj(phone).phone))].filter(Boolean).join(" "))
+    .filter(Boolean)
+    .join("; ");
+}
+
 /** Текст сообщения любого вида: обычный текст, нажатая кнопка, подпись к фото или название вложения. */
 function messageText(message: Json): string {
   const type = text(message.type);
@@ -124,10 +151,19 @@ function messageText(message: Json): string {
     text(obj(message.button).text) ||
     text(obj(obj(message.interactive).button_reply).title) ||
     text(obj(obj(message.interactive).list_reply).title) ||
-    text(obj(message[type]).caption);
+    text(obj(message[type]).caption) ||
+    placeOrContact(message);
   const label = MEDIA_LABELS[type] ?? "";
   const combined = body && label ? `${label}: ${body}` : body || label || (type ? `Сообщение (${type})` : "");
   return combined.slice(0, MAX_TEXT_LENGTH);
+}
+
+function mediaOf(message: Json): WhatsAppMedia | null {
+  const type = text(message.type);
+  const media = obj(message[type]);
+  const id = text(media.id);
+  if (!MEDIA_TYPES.has(type) || !id) return null;
+  return { id, type: type as WhatsAppMedia["type"], voice: media.voice === true, mimeType: text(media.mime_type), filename: text(media.filename) || null };
 }
 
 function formNotice(value: Json): FormNotice | null {
@@ -159,6 +195,7 @@ function incoming(value: Json): IncomingMessage[] {
       adId: text(referral.source_type) === AD_SOURCE ? idOrNull(referral.source_id) : null,
       sentAt: new Date(Number.isFinite(sentMs) && sentMs > 0 ? sentMs : Date.now()).toISOString(),
       text: messageText(message),
+      media: mediaOf(message),
       referral: Object.fromEntries(REFERRAL_KEYS.map((key) => [key, text(referral[key])]).filter(([, v]) => v)),
     });
   }

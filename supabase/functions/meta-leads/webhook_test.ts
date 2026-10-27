@@ -81,7 +81,7 @@ Deno.test("WhatsApp: каждое сообщение клиента, объяв�
     ],
   });
   assertEquals(parsed.forms, []);
-  const base = { numberId: "555", from: "77011234567", name: "Айгерим", sentAt: "2025-10-09T08:53:20.000Z", adId: null, referral: {} };
+  const base = { numberId: "555", from: "77011234567", name: "Айгерим", sentAt: "2025-10-09T08:53:20.000Z", adId: null, media: null, referral: {} };
   assertEquals(parsed.messages, [
     {
       ...base,
@@ -92,10 +92,35 @@ Deno.test("WhatsApp: каждое сообщение клиента, объяв�
     },
     { ...base, messageId: "wamid.B", text: "Здравствуйте" },
     { ...base, messageId: "wamid.C", text: "Здравствуйте", referral: { source_id: "777" } },
-    { ...base, messageId: "wamid.D", text: "📷 Фото: вот такой" },
-    { ...base, messageId: "wamid.E", text: "🎤 Голосовое сообщение" },
+    { ...base, messageId: "wamid.D", text: "📷 Фото: вот такой", media: { id: "m1", type: "image", voice: false, mimeType: "", filename: null } },
+    { ...base, messageId: "wamid.E", text: "🎤 Голосовое сообщение", media: { id: "m2", type: "audio", voice: false, mimeType: "", filename: null } },
     { ...base, messageId: "wamid.G", text: "Хочу записаться" },
   ]);
+});
+
+Deno.test("WhatsApp: файлы, голосовое, геопозиция и контакт", () => {
+  const value = (messages: Record<string, unknown>[]) => ({
+    object: "whatsapp_business_account",
+    entry: [{ changes: [{ field: "messages", value: { metadata: { phone_number_id: "555" }, messages: messages.map((m, i) => ({ from: "77011234567", id: `w${i}`, timestamp: "1", ...m })) } }] }],
+  });
+  const parsed = parseWebhook(
+    value([
+      { type: "audio", audio: { id: "a1", mime_type: "audio/ogg; codecs=opus", voice: true } },
+      { type: "document", document: { id: "d1", mime_type: "application/pdf", filename: "Договор.pdf", caption: "подпишите" } },
+      { type: "sticker", sticker: { id: "s1", mime_type: "image/webp" } },
+      { type: "location", location: { latitude: 43.238, longitude: 76.889, name: "Офис", address: "Абая 1" } },
+      { type: "contacts", contacts: [{ name: { formatted_name: "Дана" }, phones: [{ phone: "+7 701 000 0000" }] }] },
+      { type: "video", video: {} },
+    ]),
+  ).messages;
+  assertEquals(parsed[0].media, { id: "a1", type: "audio", voice: true, mimeType: "audio/ogg; codecs=opus", filename: null });
+  assertEquals(parsed[1].media, { id: "d1", type: "document", voice: false, mimeType: "application/pdf", filename: "Договор.pdf" });
+  assertEquals(parsed[1].text, "📄 Документ: подпишите");
+  assertEquals([parsed[2].media, parsed[2].text], [null, "Стикер"]);
+  assertEquals(parsed[3].text, "📍 Геопозиция: Офис, Абая 1, https://maps.google.com/?q=43.238,76.889");
+  assertEquals(parsed[4].text, "👤 Контакт: Дана +7 701 000 0000");
+  // Без ID файла пересылать нечего: остаётся подпись
+  assertEquals([parsed[5].media, parsed[5].text], [null, "🎬 Видео"]);
 });
 
 Deno.test("мусор вместо уведомления не ломает разбор", () => {

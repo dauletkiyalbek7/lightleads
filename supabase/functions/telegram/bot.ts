@@ -1,10 +1,13 @@
 // Бот LightLeads: запросы к Telegram Bot API и отправка в чаты проекта.
 // Общий для функций `telegram` (заявки из очереди, ответы менеджеров) и `meta-leads` (переписка WhatsApp).
 import { admin, ALLOWED_ORIGINS } from "../_shared/core.ts";
-import type { LeadNotice, OutgoingMessage } from "./message.ts";
+import type { LeadNotice, MediaKind, OutgoingMessage } from "./message.ts";
 
 export const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") ?? "";
 const API_URL = `https://api.telegram.org/bot${BOT_TOKEN}`;
+const FILE_URL = `https://api.telegram.org/file/bot${BOT_TOKEN}`;
+const HTTP_BAD_REQUEST = 400;
+const MEDIA_METHODS: Record<MediaKind, string> = { photo: "sendPhoto", video: "sendVideo", voice: "sendVoice", audio: "sendAudio", document: "sendDocument" };
 export const APP_URL = ALLOWED_ORIGINS[0];
 const MAX_ERROR_LENGTH = 300;
 const BROKEN_CHAT_NOTE = "Бот не может писать в этот чат: его удалили или заблокировали. Подключите чат заново.";
@@ -35,10 +38,25 @@ export class TelegramError extends Error {
 
 export const errorText = (error: unknown) => String(error instanceof TelegramError ? error.description : error).slice(0, MAX_ERROR_LENGTH);
 
+/** Запрос с файлом: multipart, остальные поля — строками, объекты — в JSON. */
+function formOf(params: Record<string, unknown>): FormData {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined) continue;
+    if (value instanceof Blob) form.append(key, value);
+    else form.append(key, typeof value === "object" ? JSON.stringify(value) : String(value));
+  }
+  return form;
+}
+
 export async function tg<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+  const withFile = Object.values(params).some((value) => value instanceof Blob);
   let response: Response;
   try {
-    response = await fetch(`${API_URL}/${method}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(params) });
+    response = await fetch(
+      `${API_URL}/${method}`,
+      withFile ? { method: "POST", body: formOf(params) } : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(params) },
+    );
   } catch (error) {
     throw new TelegramError(0, String(error));
   }
@@ -47,21 +65,62 @@ export async function tg<T>(method: string, params: Record<string, unknown> = {}
   return payload.result as T;
 }
 
+interface SentFile {
+  file_id: string;
+}
+interface SentMessage {
+  message_id: number;
+  photo?: SentFile[];
+  video?: SentFile;
+  voice?: SentFile;
+  audio?: SentFile;
+  document?: SentFile;
+}
+
+/** ID файла в отправленном сообщении: Telegram мог показать его не тем видом, каким отправляли. */
+const sentFileId = (sent: SentMessage) => sent.photo?.at(-1)?.file_id ?? (sent.video ?? sent.voice ?? sent.audio ?? sent.document)?.file_id ?? null;
+
 /** Отправляет сообщение; replyTo — ответом на сообщение в чате. Возвращает ID отправленного сообщения. */
 export async function send(chatId: number, message: OutgoingMessage, replyTo?: number): Promise<number> {
-  const sent = await tg<{ message_id: number }>("sendMessage", {
+  const params = {
     chat_id: chatId,
-    text: message.text,
     parse_mode: "HTML",
-    link_preview_options: { is_disabled: true },
     ...(replyTo ? { reply_parameters: { message_id: replyTo, allow_sending_without_reply: true } } : {}),
     ...(message.forceReply
       ? { reply_markup: { force_reply: true, selective: true, input_field_placeholder: message.forceReply } }
       : message.buttons.length
         ? { reply_markup: { inline_keyboard: message.buttons.map((button) => [button]) } }
         : {}),
-  });
+  };
+  const attachment = message.attachment;
+  if (!attachment) return (await tg<SentMessage>("sendMessage", { ...params, text: message.text, link_preview_options: { is_disabled: true } })).message_id;
+
+  const sendAs = (kind: MediaKind) => tg<SentMessage>(MEDIA_METHODS[kind], { ...params, caption: message.text, [kind]: attachment.file });
+  let kind = attachment.kind;
+  let sent: SentMessage;
+  try {
+    sent = await sendAs(kind);
+  } catch (error) {
+    // Telegram не принял файл как фото, видео или голосовое (размер, формат): отправляем документом
+    if (!(error instanceof TelegramError) || error.code !== HTTP_BAD_REQUEST || error.permanent || error.migrateTo || kind === "document") throw error;
+    kind = "document";
+    sent = await sendAs(kind);
+  }
+  // Файл уже в Telegram: в остальные чаты проекта он уйдёт по ID, без повторной загрузки
+  const fileId = sentFileId(sent);
+  if (fileId) Object.assign(attachment, { kind, file: fileId });
   return sent.message_id;
+}
+
+/** Скачивает файл, который прислали боту: Telegram отдаёт ботам файлы до 20 МБ. */
+export async function downloadFile(fileId: string): Promise<Blob> {
+  const file = await tg<{ file_path?: string }>("getFile", { file_id: fileId });
+  if (!file.file_path) throw new TelegramError(0, "file_path missing");
+  const response = await fetch(`${FILE_URL}/${file.file_path}`).catch((error) => {
+    throw new TelegramError(0, String(error));
+  });
+  if (!response.ok) throw new TelegramError(response.status, `HTTP ${response.status}`);
+  return await response.blob();
 }
 
 export const reply = (chatId: number, text: string, replyTo?: number) =>

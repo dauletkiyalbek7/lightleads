@@ -24,8 +24,8 @@ import {
 import { extractLead, normalizePhone } from "../leads/extract.ts";
 import { DIALOG_URL, GRAPH_URL, graphGet, graphList, META_APP_ID, META_APP_SECRET, META_LOGIN_CONFIG_ID, META_SCOPES } from "../meta-oauth/lib.ts";
 import { activeChats, APP_URL, broadcast, leadNotices, rememberThread, workspaceName } from "../telegram/bot.ts";
-import { chatMessage, leadMessage } from "../telegram/message.ts";
-import { fieldsOf, type FormNotice, type IncomingMessage, parseSignedRequest, parseWebhook, verifySignature, verifyToken } from "./webhook.ts";
+import { type Attachment, chatMessage, leadMessage, type MediaKind, type OutgoingMessage } from "../telegram/message.ts";
+import { fieldsOf, type FormNotice, type IncomingMessage, parseSignedRequest, parseWebhook, verifySignature, verifyToken, type WhatsAppMedia } from "./webhook.ts";
 
 const SECOND_MS = 1000;
 const HOUR_MS = 60 * 60 * SECOND_MS;
@@ -51,6 +51,12 @@ const WEBHOOK_URL = `${SUPABASE_URL}/functions/v1/meta-leads`;
 /** Страница, где человек видит, что его запрос на удаление выполнен. */
 const DELETION_STATUS_URL = `${ALLOWED_ORIGINS[0]}/data-deletion`;
 const CONFIRMATION_CODE_BYTES = 8;
+/** Файлы клиентов больше этого в Telegram не пересылаем: в чат уходит только подпись. */
+const MAX_MEDIA_BYTES = 20 * 1024 * 1024;
+const MEDIA_NOT_FORWARDED = "⚠️ Файл не получилось переслать сюда.";
+/** Вид файла в Telegram для вложения WhatsApp; голосовое — отдельно. */
+const TELEGRAM_KINDS: Record<WhatsAppMedia["type"], MediaKind> = { image: "photo", video: "video", audio: "audio", document: "document" };
+const FILE_BASENAMES: Record<MediaKind, string> = { photo: "photo", video: "video", voice: "voice", audio: "audio", document: "file" };
 
 const LEAD_FIELDS = "id,created_time,field_data";
 /** ID объявления в заявке Meta отдаёт не при всех правах: просим его, а при отказе читаем без него. */
@@ -269,22 +275,53 @@ async function handleForm(notice: FormNotice) {
   });
 }
 
+/** Скачивает у Meta фото, видео, голосовое или документ клиента. null — не вышло или файл слишком большой. */
+async function downloadMedia(workspaceId: string, media: WhatsAppMedia): Promise<Attachment | null> {
+  try {
+    const { token } = await connectionToken(workspaceId, "meta");
+    const info = await graphGet<{ url?: string; mime_type?: string; file_size?: number }>(`/${media.id}`, {}, token);
+    if (!info.url || Number(info.file_size ?? 0) > MAX_MEDIA_BYTES) return null;
+    // Ссылка на файл открывается только с ключом доступа в заголовке
+    const response = await fetch(info.url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!response.ok) return null;
+    const bytes = await response.arrayBuffer();
+    if (bytes.byteLength > MAX_MEDIA_BYTES) return null;
+    const kind = media.voice ? "voice" : TELEGRAM_KINDS[media.type];
+    const type = media.mimeType || info.mime_type || "application/octet-stream";
+    const extension = type.split(";")[0].split("/")[1] || "bin";
+    return { kind, file: new File([bytes], media.filename || `${FILE_BASENAMES[kind]}.${extension}`, { type }) };
+  } catch (error) {
+    console.error("meta-leads media failed:", errorText(error));
+    return null;
+  }
+}
+
 /**
- * Сообщение клиента в Telegram проекта: новая заявка — карточкой, дальше — короткими сообщениями.
- * Ответ менеджера на любое из них уйдёт этому клиенту (функция `telegram`). Сбой Telegram заявку не теряет.
+ * Сообщение клиента в Telegram проекта: новая заявка — карточкой, дальше — короткими сообщениями,
+ * фото, видео и файлы — самими файлами. Ответ менеджера на любое из них уйдёт этому клиенту (функция `telegram`).
+ * Сбой Telegram заявку не теряет.
  */
 async function forwardToTelegram(channel: Channel, message: IncomingMessage, phone: string, leadId: string | null) {
   try {
     const chats = await activeChats(channel.workspace_id);
     if (!chats.length) return;
+    const attachment = message.media ? await downloadMedia(channel.workspace_id, message.media) : null;
+    const text = message.media && !attachment ? `${message.text}\n${MEDIA_NOT_FORWARDED}` : message.text;
     const lead = leadId ? (await leadNotices([leadId]))[0] : undefined;
-    // Клиент пишет снова: кнопка «Продажа» под сообщением записывает продажу по его последней заявке
-    const { data: last } = lead ? { data: null } : await admin.from("leads").select("id").eq("workspace_id", channel.workspace_id).eq("phone", phone).order("created_at", { ascending: false }).limit(1);
-    const outgoing = lead
-      ? leadMessage(lead.notice, APP_URL, true, lead.id)
-      : chatMessage(await workspaceName(channel.workspace_id), message.name, phone, message.text, last?.[0]?.id);
-    const { sent } = await broadcast(chats, outgoing);
-    await rememberThread(channel.workspace_id, channel.id, message.from, sent);
+    const outgoing: OutgoingMessage[] = [];
+    if (lead) {
+      outgoing.push(leadMessage(lead.notice, APP_URL, true, lead.id));
+      // Первое сообщение клиента — с фото или файлом: следом за карточкой заявки сам файл
+      if (attachment) outgoing.push(chatMessage(lead.notice.project, message.name, phone, message.text, lead.id, attachment));
+    } else {
+      // Клиент пишет снова: кнопка «Продажа» под сообщением записывает продажу по его последней заявке
+      const { data: last } = await admin.from("leads").select("id").eq("workspace_id", channel.workspace_id).eq("phone", phone).order("created_at", { ascending: false }).limit(1);
+      outgoing.push(chatMessage(await workspaceName(channel.workspace_id), message.name, phone, text, last?.[0]?.id, attachment ?? undefined));
+    }
+    for (const item of outgoing) {
+      const { sent } = await broadcast(chats, item);
+      await rememberThread(channel.workspace_id, channel.id, message.from, sent);
+    }
   } catch (error) {
     console.error("meta-leads telegram failed:", errorText(error));
   }

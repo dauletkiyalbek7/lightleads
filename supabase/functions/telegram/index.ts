@@ -1,7 +1,8 @@
 // Edge Function `telegram`: бот LightLeads присылает новые заявки проекта в Telegram,
 // передаёт клиентам WhatsApp ответы менеджеров и записывает продажи, закрытые в чате.
 //   POST + X-Telegram-Bot-Api-Secret-Token — обновление от Telegram: «/start КОД» подключает чат к проекту,
-//                                           ответ на сообщение клиента WhatsApp уходит этому клиенту,
+//                                           ответ на сообщение клиента WhatsApp (текст, фото, видео,
+//                                           голосовое, файл) уходит этому клиенту,
 //                                           «✅ Продажа» под заявкой и ответ суммой записывают продажу
 //   POST {action:"cron"} + x-cron-secret   — раз в минуту, когда есть очередь: отправить новые заявки
 //   POST {action} + JWT                    — участник проекта: ссылка на бота, список чатов, проверка, отключение
@@ -11,10 +12,10 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { admin, type Caller, connectionToken, CORS, getCaller, HttpError, json, requireMember, SUPABASE_URL } from "../_shared/core.ts";
 import { GRAPH_URL } from "../meta-oauth/lib.ts";
-import { APP_URL, BOT_TOKEN, broadcast, CHAT_COLUMNS, type ChatRow, errorText, leadNotices, reply, send, tg, workspaceName } from "./bot.ts";
+import { APP_URL, BOT_TOKEN, broadcast, CHAT_COLUMNS, type ChatRow, downloadFile, errorText, leadNotices, reply, send, tg, workspaceName } from "./bot.ts";
 import { DEMO_LEAD, leadMessage, parseStart, sameText, summaryMessage, testMessage, webhookSecret } from "./message.ts";
 import { DEMO_SALE_NOTE, matchProduct, parseCallback, parseSale, type ProductRow, SALE_HELP, saleCost, salePrompt, saleSavedMessage, saleUndoneText, todayIn } from "./sale.ts";
-import { whatsappProblem } from "./whatsapp.ts";
+import { type ManagerMedia, managerMedia, MAX_WHATSAPP_CAPTION, NOTHING_TO_SEND, type TgAttachments, whatsappProblem } from "./whatsapp.ts";
 
 const WEBHOOK_URL = `${SUPABASE_URL}/functions/v1/telegram`;
 const MINUTE_MS = 60_000;
@@ -76,11 +77,12 @@ interface TgUser {
   username?: string;
 }
 
-interface TgMessage {
+interface TgMessage extends TgAttachments {
   message_id: number;
   chat?: TgChat;
   from?: TgUser;
   text?: string;
+  caption?: string;
   migrate_to_chat_id?: number;
   reply_to_message?: { message_id: number };
 }
@@ -127,25 +129,72 @@ interface Thread {
   wa_id: string;
 }
 
-/** Отправляет текст клиенту с номера компании. Возвращает null или понятное объяснение, почему не вышло. */
-async function sendWhatsApp(thread: Thread, text: string): Promise<string | null> {
+/** Номер компании, с которого отвечаем клиенту, и доступ к нему. */
+interface WhatsAppTarget {
+  numberId: string;
+  token: string;
+  to: string;
+}
+
+/** Куда и с каким доступом отвечать. Строка — объяснение, почему ответить нельзя. */
+async function whatsappTarget(thread: Thread): Promise<WhatsAppTarget | string> {
   const { data: channel } = await admin.from("lead_channels").select("external_id").eq("id", thread.channel_id).maybeSingle();
   if (!channel) return "Этот номер WhatsApp уже отключён от проекта в LightLeads.";
-  let token: string;
   try {
-    token = (await connectionToken(thread.workspace_id, "meta")).token;
+    return { numberId: channel.external_id, token: (await connectionToken(thread.workspace_id, "meta")).token, to: thread.wa_id };
   } catch {
     return "В проекте не подключена Meta: откройте LightLeads → Настройки → Подключения.";
   }
-  const response = await fetch(`${GRAPH_URL}/${channel.external_id}/messages`, {
+}
+
+/**
+ * Запрос к WhatsApp Cloud API от имени номера компании: «media» — загрузить файл (форма),
+ * «messages» — отправить сообщение клиенту. Возвращает ID файла или сообщения либо понятное объяснение ошибки.
+ */
+async function whatsappCall(target: WhatsAppTarget, edge: "media" | "messages", body: FormData | Record<string, unknown>): Promise<{ id: string } | { problem: string }> {
+  const form = body instanceof FormData;
+  const response = await fetch(`${GRAPH_URL}/${target.numberId}/${edge}`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", to: thread.wa_id, type: "text", text: { body: text.slice(0, MAX_WHATSAPP_TEXT), preview_url: false } }),
+    headers: { Authorization: `Bearer ${target.token}`, ...(form ? {} : { "Content-Type": "application/json" }) },
+    body: form ? body : JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", to: target.to, ...body }),
   }).catch(() => null);
-  if (!response) return "Не удалось связаться с WhatsApp. Попробуйте ещё раз через минуту.";
-  const payload = (await response.json().catch(() => ({}))) as { error?: { code?: number; message?: string } };
-  if (response.ok && !payload.error) return null;
-  return whatsappProblem(payload.error?.code ?? response.status, payload.error?.message ?? `HTTP ${response.status}`);
+  if (!response) return { problem: "Не удалось связаться с WhatsApp. Попробуйте ещё раз через минуту." };
+  const payload = (await response.json().catch(() => ({}))) as { id?: string; messages?: { id?: string }[]; error?: { code?: number; message?: string } };
+  if (response.ok && !payload.error) return { id: payload.id ?? payload.messages?.[0]?.id ?? "" };
+  return { problem: whatsappProblem(payload.error?.code ?? response.status, payload.error?.message ?? `HTTP ${response.status}`) };
+}
+
+const problemOf = (result: { id: string } | { problem: string }) => ("problem" in result ? result.problem : null);
+
+const sendWhatsAppText = async (target: WhatsAppTarget, text: string) =>
+  problemOf(await whatsappCall(target, "messages", { type: "text", text: { body: text.slice(0, MAX_WHATSAPP_TEXT), preview_url: false } }));
+
+/** Файл из Telegram — клиенту: скачать у Telegram, загрузить в WhatsApp, отправить с подписью. */
+async function sendWhatsAppMedia(target: WhatsAppTarget, media: ManagerMedia, caption: string): Promise<string | null> {
+  let blob: Blob;
+  try {
+    blob = await downloadFile(media.fileId);
+  } catch (error) {
+    console.error("telegram file download failed:", errorText(error));
+    return "Не удалось скачать файл из Telegram. Отправьте его ещё раз.";
+  }
+  const form = new FormData();
+  form.append("messaging_product", "whatsapp");
+  form.append("type", media.mimeType);
+  form.append("file", new File([blob], media.filename, { type: media.mimeType }));
+  const upload = await whatsappCall(target, "media", form);
+  if ("problem" in upload) return upload.problem;
+
+  // У аудио в WhatsApp нет подписи: текст уходит следом отдельным сообщением
+  const withCaption = Boolean(caption) && media.type !== "audio";
+  const content = {
+    id: upload.id,
+    ...(withCaption ? { caption: caption.slice(0, MAX_WHATSAPP_CAPTION) } : {}),
+    ...(media.type === "document" ? { filename: media.filename } : {}),
+  };
+  const problem = problemOf(await whatsappCall(target, "messages", { type: media.type, [media.type]: content }));
+  if (problem || !caption || withCaption) return problem;
+  return await sendWhatsAppText(target, caption);
 }
 
 /** Менеджер ответил на сообщение клиента WhatsApp: пересылаем ответ клиенту. */
@@ -153,17 +202,22 @@ async function relayReply(message: TgMessage, chat: TgChat, repliedTo: number) {
   const { data: thread } = await admin.from("telegram_threads").select("workspace_id, channel_id, wa_id").eq("chat_id", chat.id).eq("message_id", repliedTo).maybeSingle();
   // Ответ на другое сообщение бота («Готово», сводка заявок) — не переписка с клиентом
   if (!thread) return;
-  const text = message.text?.trim();
-  if (!text) {
-    await reply(chat.id, "Клиенту в WhatsApp пока можно отправить только текст.", message.message_id);
+  const text = (message.text ?? message.caption ?? "").trim();
+  const media = managerMedia(message);
+  if (!text && !media) {
+    await reply(chat.id, NOTHING_TO_SEND, message.message_id);
     return;
   }
-  const problem = await sendWhatsApp(thread, text);
+  let problem: string | null;
+  const target = await whatsappTarget(thread);
+  if (media && "problem" in media) problem = media.problem;
+  else if (typeof target === "string") problem = target;
+  else problem = media ? await sendWhatsAppMedia(target, media, text) : await sendWhatsAppText(target, text);
   if (problem) {
     await reply(chat.id, `⚠️ Не отправлено. ${problem}`, message.message_id);
     return;
   }
-  await admin.from("audit_log").insert({ workspace_id: thread.workspace_id, actor_id: null, action: "whatsapp.reply_sent", details: { via: "telegram" } });
+  await admin.from("audit_log").insert({ workspace_id: thread.workspace_id, actor_id: null, action: "whatsapp.reply_sent", details: { via: "telegram", kind: media && "type" in media ? media.type : "text" } });
   await tg("setMessageReaction", { chat_id: chat.id, message_id: message.message_id, reaction: [{ type: "emoji", emoji: SENT_REACTION }] }).catch(() =>
     reply(chat.id, "✅ Отправлено клиенту.", message.message_id),
   );

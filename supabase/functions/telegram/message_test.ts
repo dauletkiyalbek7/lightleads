@@ -86,6 +86,34 @@ Deno.test("сообщение из переписки: кто написал и 
   assertEquals(buttons, []);
 });
 
+Deno.test("сообщение с файлом: текст становится подписью и укладывается в предел Telegram", () => {
+  const attachment = { kind: "photo" as const, file: "file-id" };
+  const message = chatMessage("Bilim", "Дана", "+77011234567", "а".repeat(5000), "lead-1", attachment);
+  assertEquals(message.attachment, attachment);
+  assert(message.text.length < 1024);
+  assertEquals(chatMessage("Bilim", "Дана", "+77011234567", "а".repeat(5000)).attachment, undefined);
+});
+
+Deno.test("ответ менеджера файлом: тип сообщения WhatsApp по виду и размеру", async () => {
+  const { managerMedia } = await import("./whatsapp.ts");
+  const MB = 1024 * 1024;
+  assertEquals(managerMedia({}), null);
+  assertEquals(managerMedia({ photo: [{ file_id: "small", file_size: 100 }, { file_id: "big", file_size: 2 * MB }] }), { fileId: "big", type: "image", mimeType: "image/jpeg", filename: "photo.jpeg" });
+  assertEquals(managerMedia({ voice: { file_id: "v", mime_type: "audio/ogg", file_size: 30_000 } }), { fileId: "v", type: "audio", mimeType: "audio/ogg", filename: "voice.ogg" });
+  assertEquals(managerMedia({ video_note: { file_id: "n", file_size: MB } }), { fileId: "n", type: "video", mimeType: "video/mp4", filename: "video.mp4" });
+  // Видео больше 16 МБ и аудио в неподходящем формате WhatsApp принимает только документом
+  assertEquals(managerMedia({ video: { file_id: "x", mime_type: "video/mp4", file_size: 17 * MB } }), { fileId: "x", type: "document", mimeType: "video/mp4", filename: "video.mp4" });
+  assertEquals(managerMedia({ audio: { file_id: "x", mime_type: "audio/flac", file_name: "song.flac" } }), { fileId: "x", type: "document", mimeType: "audio/flac", filename: "song.flac" });
+  assertEquals(managerMedia({ document: { file_id: "d", mime_type: "application/pdf", file_name: "Счёт.pdf", file_size: 3 * MB } }), {
+    fileId: "d",
+    type: "document",
+    mimeType: "application/pdf",
+    filename: "Счёт.pdf",
+  });
+  assert("problem" in (managerMedia({ document: { file_id: "d", file_size: 21 * MB } }) ?? {}));
+  assert("problem" in (managerMedia({ sticker: { file_id: "s" } }) ?? {}));
+});
+
 Deno.test("ошибки WhatsApp: известные коды понятным текстом, остальные — как ответила Meta", async () => {
   const { whatsappProblem } = await import("./whatsapp.ts");
   assert(whatsappProblem(131047, "Re-engagement message").includes("24 часов"));

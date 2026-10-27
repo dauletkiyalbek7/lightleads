@@ -8,6 +8,8 @@ const TIME_ZONE = "Asia/Almaty";
 const MAX_MESSAGE_LENGTH = 300;
 /** Сообщение клиента в переписке показываем целиком, но не длиннее предела Telegram (4096). */
 const MAX_CHAT_TEXT_LENGTH = 3500;
+/** Подпись к файлу Telegram ограничивает 1024 символами: оставляем запас на имя и телефон. */
+const MAX_CAPTION_TEXT_LENGTH = 800;
 const MAX_LINE_LENGTH = 80;
 /** Столько заявок перечисляем в сводке; об остальных — только число. */
 export const SUMMARY_LINES = 10;
@@ -40,9 +42,20 @@ export interface LeadNotice {
 /** Кнопка-ссылка или кнопка, нажатие которой бот получает в callback_query. */
 export type Button = { text: string; url: string } | { text: string; callback_data: string };
 
+/** Как Telegram показывает файл: фото, видео, голосовое, аудио или документ. */
+export type MediaKind = "photo" | "video" | "voice" | "audio" | "document";
+
+/** Файл к сообщению бота: сам файл или ID файла, который уже есть в Telegram. */
+export interface Attachment {
+  kind: MediaKind;
+  file: File | string;
+}
+
 export interface OutgoingMessage {
+  /** Текст сообщения; с вложением — подпись к файлу. */
   text: string;
   buttons: Button[];
+  attachment?: Attachment;
   /** Попросить ответить на это сообщение; значение — подсказка в поле ввода. */
   forceReply?: string;
 }
@@ -113,10 +126,14 @@ export function leadMessage(lead: LeadNotice, appUrl: string, replyable = false,
   return { text: lines.join("\n"), buttons: [...sale, { text: "Написать в WhatsApp", url: whatsappLink(lead.phone) }, leadsButton(appUrl)] };
 }
 
-/** Следующее сообщение клиента в WhatsApp: он уже есть в заявках, поэтому коротко. leadId — его последняя заявка. */
-export function chatMessage(project: string, name: string, phone: string, text: string, leadId?: string): OutgoingMessage {
+/**
+ * Следующее сообщение клиента в WhatsApp: он уже есть в заявках, поэтому коротко. leadId — его последняя заявка.
+ * attachment — фото, видео или файл клиента: текст становится подписью к нему.
+ */
+export function chatMessage(project: string, name: string, phone: string, text: string, leadId?: string, attachment?: Attachment): OutgoingMessage {
   const who = `<b>${escapeHtml(name || "Без имени")}</b> · ${formatPhone(phone)} · ${escapeHtml(project)}`;
-  return { text: `💬 ${who}\n${escapeHtml(clip(text, MAX_CHAT_TEXT_LENGTH))}`, buttons: leadId ? [saleButton(leadId)] : [] };
+  const body = escapeHtml(clip(text, attachment ? MAX_CAPTION_TEXT_LENGTH : MAX_CHAT_TEXT_LENGTH));
+  return { text: `💬 ${who}\n${body}`, buttons: leadId ? [saleButton(leadId)] : [], ...(attachment ? { attachment } : {}) };
 }
 
 /** Много заявок сразу (например, загрузили таблицу): одно сообщение вместо десятков. */
